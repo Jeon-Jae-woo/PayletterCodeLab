@@ -1,0 +1,769 @@
+{% extends 'base.html' %}
+
+{% block title %}호출 흐름도 — payletterCodeLab{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ================================================================
+   flow.html 전용 스타일
+   screen_ref: flow-graph
+   [GR-4.2] 색상/간격은 var(--token) 전용 — 하드코딩 hex 금지
+   [PR-8]   CDN URL 없음 — 로컬 번들 전용
+   ================================================================ */
+
+#flow-container { position: relative; }
+
+/* ── 상단 컨트롤 바 (start-selector + depth-control) ── */
+.flow-control-bar {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    flex-wrap: wrap;
+}
+.ctrl-label { font-size: var(--font-size-caption); color: var(--color-text-secondary); }
+.ctrl-select {
+    flex: 1; min-width: 240px; max-width: 520px;
+    padding: 6px var(--spacing-sm);
+    border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-primary); font-size: 13px;
+    outline: none;
+}
+.ctrl-select:focus { border-color: var(--color-primary); }
+.depth-controls { display: flex; align-items: center; gap: 4px; }
+.btn-depth {
+    width: 28px; height: 28px; border: 1px solid var(--color-border);
+    border-radius: var(--rounded-sm); background: var(--color-bg);
+    color: var(--color-text-primary); cursor: pointer; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s ease;
+}
+.btn-depth:hover { background: var(--color-surface); }
+.depth-display {
+    font-size: 13px; font-weight: 600; color: var(--color-text-primary);
+    min-width: 24px; text-align: center;
+}
+.ctrl-divider { width: 1px; height: 24px; background: var(--color-border); margin: 0 4px; }
+
+/* ── 메인 레이아웃 ── */
+.flow-main { display: flex; gap: var(--spacing-md); align-items: flex-start; }
+
+/* ── 그래프 카드 ── */
+.flow-graph-card {
+    flex: 1; min-width: 0; background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card); overflow: hidden;
+}
+.flow-graph-inner { position: relative; }
+
+/* ── SVG 캔버스 ── */
+#flow-svg {
+    display: block; width: 100%; height: 580px;
+    background: var(--color-surface); cursor: move;
+}
+#flow-svg:active { cursor: move; }
+
+/* ── 줌 컨트롤 ── */
+[data-region="zoom-controls"] {
+    position: absolute; bottom: var(--spacing-md); right: var(--spacing-md);
+    display: flex; flex-direction: column; gap: var(--spacing-xs); z-index: 3;
+}
+.btn-zoom {
+    width: 32px; height: 32px; border: 1px solid var(--color-border);
+    background: var(--color-bg); border-radius: var(--rounded-sm); cursor: pointer;
+    font-size: 16px; display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow-card); color: var(--color-text-primary);
+    transition: background 0.15s ease;
+}
+.btn-zoom:hover { background: var(--color-surface); }
+.btn-zoom-fit   { font-size: 13px; }
+
+/* ── detail-box (floating) [data-region="detail-box"] ── */
+[data-region="detail-box"] {
+    position: absolute; top: var(--spacing-md); left: var(--spacing-md); z-index: 10;
+    width: 220px; background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    padding: var(--spacing-md); display: none;
+}
+[data-region="detail-box"].visible { display: block; }
+.detail-title {
+    font-size: 13px; font-weight: 600; color: var(--color-text-primary);
+    margin-bottom: var(--spacing-sm); word-break: break-all;
+}
+.detail-row {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 6px; font-size: 12px;
+}
+.detail-key { color: var(--color-text-secondary); flex-shrink: 0; margin-right: 6px; }
+.detail-val { font-weight: 600; color: var(--color-text-primary); word-break: break-all; }
+.cc-badge {
+    font-size: 11px; font-weight: 600; padding: 1px 6px;
+    border-radius: var(--rounded-full);
+}
+.cc-low  { background: var(--color-success-light); color: var(--color-success); }
+.cc-mid  { background: var(--color-warning-light); color: var(--color-warning); }
+.cc-high { background: var(--color-danger-light);  color: var(--color-danger); }
+.btn-close-detail {
+    margin-top: var(--spacing-xs); width: 100%; padding: 5px;
+    border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-secondary);
+    cursor: pointer; font-size: 12px; transition: background 0.15s ease;
+}
+.btn-close-detail:hover { background: var(--color-surface); }
+
+/* ── 범례 ── */
+[data-region="legend"] {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+    display: flex; align-items: center; gap: var(--spacing-md); flex-wrap: wrap;
+    font-size: var(--font-size-caption); color: var(--color-text-secondary);
+}
+.legend-item { display: flex; align-items: center; gap: var(--spacing-xs); }
+.legend-dot  { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── SVG 내보내기 ── */
+[data-region="svg-export-action"] {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+    display: flex; justify-content: flex-end;
+}
+.btn-export {
+    padding: 7px var(--spacing-md); border: 1px solid var(--color-primary);
+    border-radius: var(--rounded-sm); background: var(--color-bg);
+    color: var(--color-primary); cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: background 0.15s ease;
+}
+.btn-export:hover { background: var(--color-primary-light); }
+
+/* ── 콜 트리 패널 (call-tree-panel) ── */
+[data-region="call-tree-panel"] {
+    width: 240px; min-width: 240px; background: var(--color-bg);
+    border: 1px solid var(--color-border); border-radius: var(--border-radius-card);
+    box-shadow: var(--shadow-card); display: flex; flex-direction: column; max-height: 660px;
+}
+.panel-header {
+    padding: var(--spacing-sm) var(--spacing-md); border-bottom: 1px solid var(--color-border);
+    font-size: 13px; font-weight: 600; color: var(--color-text-primary); flex-shrink: 0;
+}
+.panel-body { overflow-y: auto; flex: 1; padding: var(--spacing-xs) 0; }
+.tree-item {
+    display: flex; align-items: center; gap: 6px; padding: 5px var(--spacing-sm);
+    cursor: pointer; transition: background 0.1s ease; font-size: 12px;
+}
+.tree-item:hover    { background: var(--color-surface); }
+.tree-item.selected { background: var(--color-primary-light); }
+.tree-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.tree-name {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--color-text-primary);
+}
+.tree-cc {
+    font-size: 10px; font-weight: 600; padding: 1px 4px;
+    border-radius: 3px; flex-shrink: 0;
+}
+
+/* ── 로딩 스켈레톤 ── */
+[data-region="loading-skeleton-canvas"] {
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    gap: var(--spacing-md); height: 480px;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    margin-bottom: var(--spacing-lg);
+}
+.skeleton-spinner {
+    width: 40px; height: 40px; border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary); border-radius: 50%;
+    animation: flow-spin 0.8s linear infinite;
+}
+@keyframes flow-spin { to { transform: rotate(360deg); } }
+.skeleton-label { color: var(--color-text-secondary); font-size: var(--font-size-body); }
+
+/* ── 에러 배너 ── */
+[data-region="error-banner"] {
+    display: none; align-items: center; gap: var(--spacing-sm);
+    background: var(--color-danger-light); border: 1px solid var(--color-danger);
+    border-radius: var(--rounded-md); padding: var(--spacing-sm) var(--spacing-md);
+    margin-bottom: var(--spacing-md); font-size: 13px; color: var(--color-danger);
+}
+[data-region="error-banner"].visible { display: flex; }
+.btn-retry {
+    margin-left: auto; padding: 5px 12px; background: var(--color-danger);
+    color: #ffffff; border: none; border-radius: var(--rounded-sm);
+    cursor: pointer; font-size: 12px; transition: opacity 0.15s ease;
+}
+.btn-retry:hover { opacity: 0.85; }
+
+/* ── 빈 상태 ── */
+[data-region="empty-state"] {
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    gap: var(--spacing-md); height: 480px;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    margin-bottom: var(--spacing-lg); color: var(--color-text-secondary);
+}
+[data-region="empty-state"].visible { display: flex; }
+.empty-icon { font-size: 36px; opacity: 0.3; }
+.empty-text { font-size: var(--font-size-body); }
+
+/* ── 4-State 전환 ── */
+#flow-container[data-state="loading"] [data-region="loading-skeleton-canvas"] { display: flex; }
+#flow-container[data-state="loading"] .flow-main                              { display: none; }
+#flow-container[data-state="loading"] [data-region="error-banner"]            { display: none !important; }
+#flow-container[data-state="loading"] [data-region="empty-state"]             { display: none !important; }
+#flow-container[data-state="error"]   [data-region="error-banner"]            { display: flex; }
+#flow-container[data-state="error"]   .flow-main                              { display: none; }
+#flow-container[data-state="error"]   [data-region="empty-state"]             { display: none !important; }
+#flow-container[data-state="empty"]   [data-region="empty-state"]             { display: flex; }
+#flow-container[data-state="empty"]   .flow-main                              { display: none; }
+#flow-container[data-state="idle"]    .flow-main                              { display: flex; }
+
+/* ── D3 노드/링크 ── */
+.flow-node { cursor: pointer; }
+.flow-link { fill: none; stroke-width: 1.5; }
+.flow-node.dimmed circle { opacity: 0.15; }
+.flow-node.dimmed text   { opacity: 0.15; }
+.flow-link.dimmed        { opacity: 0.07; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="flow-container" data-state="loading">
+
+  <!-- 상단 컨트롤 바 -->
+  <div class="flow-control-bar">
+    <span class="ctrl-label">시작 함수</span>
+    <select id="flow-start-select" class="ctrl-select"
+            data-region="start-selector"
+            onchange="flowOnSelectChange()">
+      <option value="">-- 분석 결과 없음 --</option>
+    </select>
+    <div class="ctrl-divider"></div>
+    <span class="ctrl-label">탐색 깊이</span>
+    <div class="depth-controls" data-region="depth-control">
+      <button class="btn-depth" onclick="flowDepthAdj(-1)">−</button>
+      <span id="flow-depth-display" class="depth-display">3</span>
+      <button class="btn-depth" onclick="flowDepthAdj(+1)">+</button>
+    </div>
+  </div>
+
+  <!-- 로딩 스켈레톤 -->
+  <div data-region="loading-skeleton-canvas">
+    <div class="skeleton-spinner"></div>
+    <span class="skeleton-label">호출 흐름 계산 중...</span>
+  </div>
+
+  <!-- 에러 배너 -->
+  <div data-region="error-banner">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2a10 10 0 100 20A10 10 0 0012 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+    </svg>
+    <span id="flow-error-msg">함수를 찾을 수 없습니다.</span>
+    <button class="btn-retry" onclick="flowRetry()">재시도</button>
+  </div>
+
+  <!-- 빈 상태 -->
+  <div data-region="empty-state">
+    <div class="empty-icon">&#128269;</div>
+    <span class="empty-text">호출 관계가 탐지되지 않았습니다</span>
+  </div>
+
+  <!-- 메인 영역 (idle) -->
+  <div class="flow-main">
+
+    <!-- 그래프 카드 -->
+    <div class="flow-graph-card">
+      <div class="flow-graph-inner" data-region="graph-canvas">
+        <svg id="flow-svg">
+          <defs>
+            <marker id="flow-arrow" viewBox="0 -5 10 10" refX="22" refY="0"
+                    markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,-5L10,0L0,5" fill="#94a3b8"/>
+            </marker>
+          </defs>
+        </svg>
+        <!-- floating detail-box -->
+        <div data-region="detail-box" id="flow-detail-box">
+          <div class="detail-title" id="flow-detail-name">—</div>
+          <div class="detail-row">
+            <span class="detail-key">클래스</span>
+            <span class="detail-val" id="flow-detail-class">—</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-key">파일</span>
+            <span class="detail-val" id="flow-detail-file">—</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-key">CC</span>
+            <span class="detail-val" id="flow-detail-cc">—</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-key">호출 수</span>
+            <span class="detail-val" id="flow-detail-calls">—</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-key">라인</span>
+            <span class="detail-val" id="flow-detail-line">—</span>
+          </div>
+          <button class="btn-close-detail" onclick="flowCloseDetail()">닫기</button>
+        </div>
+        <!-- zoom controls -->
+        <div data-region="zoom-controls">
+          <button class="btn-zoom" onclick="flowZoomIn()" title="확대">+</button>
+          <button class="btn-zoom btn-zoom-fit" onclick="flowZoomFit()" title="전체맞춤">&#8859;</button>
+          <button class="btn-zoom" onclick="flowZoomOut()" title="축소">−</button>
+        </div>
+      </div><!-- /graph-canvas -->
+
+      <!-- 범례 -->
+      <div data-region="legend">
+        <span>범례:</span>
+        <span class="legend-item">
+          <span class="legend-dot" style="background:var(--color-text-primary)"></span>루트
+        </span>
+        <span class="legend-item">
+          <span class="legend-dot" style="background:var(--color-danger)"></span>고위험 CC≥15
+        </span>
+        <span class="legend-item">
+          <span class="legend-dot" style="background:#8b5cf6"></span>SP 호출
+        </span>
+        <span class="legend-item">
+          <span class="legend-dot"
+                style="background:var(--color-bg);border:2px solid var(--color-primary)"></span>결제 파일
+        </span>
+        <span class="legend-item">
+          <span class="legend-dot"
+                style="background:var(--color-bg);border:1px solid var(--color-border)"></span>일반
+        </span>
+      </div>
+
+      <!-- SVG 내보내기 -->
+      <div data-region="svg-export-action">
+        <button class="btn-export" onclick="flowExportSVG()">SVG 내보내기</button>
+      </div>
+    </div><!-- /flow-graph-card -->
+
+    <!-- 콜 트리 패널 -->
+    <div data-region="call-tree-panel">
+      <div class="panel-header">호출 트리</div>
+      <div class="panel-body" id="flow-tree-panel-body">
+        <div style="padding:var(--spacing-md);color:var(--color-text-secondary);font-size:13px;">
+          함수를 선택하세요
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /flow-main -->
+
+</div><!-- /flow-container -->
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/d3.v7.min.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    /* ── D3 SVG 색상 상수 (CSS var() 직접 사용 불가) ── */
+    var _T = {
+        primary: '#12ccc1',
+        danger:  '#ef4444',
+        warning: '#f59e0b',
+        info:    '#3b82f6',
+        purple:  '#8b5cf6',
+        black:   '#1a1a2e',
+        white:   '#ffffff',
+        border:  '#e2e8f0',
+        textSec: '#64748b',
+        surface: '#f4f6f8'
+    };
+
+    /* ── 모듈 상태 ── */
+    var _svg         = null;
+    var _g           = null;
+    var _zoom        = null;
+    var _sim         = null;
+    var _nodeSel     = null;
+    var _linkSel     = null;
+    var _allNodes    = [];
+    var _allEdges    = [];
+    var _depth       = 3;
+    var _startId     = null;
+    var _selectedId  = null;
+
+    /* ── 초기화 ── */
+    function _init() {
+        _switchState('loading');
+        fetch('/api/graph/flow/class')
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (data) {
+                _allNodes = data.nodes || [];
+                _allEdges = data.edges || [];
+                _populateSelector();
+                /* URL 파라미터 ?start= 딥링크 처리 [M1.AC 5.4] */
+                var urlParam = new URLSearchParams(window.location.search).get('start');
+                if (urlParam) {
+                    var sel = document.getElementById('flow-start-select');
+                    for (var i = 0; i < sel.options.length; i++) {
+                        if (sel.options[i].value === urlParam) {
+                            sel.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+                var startVal = document.getElementById('flow-start-select').value;
+                if (_allNodes.length === 0) {
+                    _switchState('empty');
+                } else if (startVal) {
+                    _startId = startVal;
+                    _renderGraph();
+                } else {
+                    _switchState('idle');
+                }
+            })
+            .catch(function (err) {
+                console.error('[flow] fetch error:', err);
+                document.getElementById('flow-error-msg').textContent =
+                    '호출 흐름 데이터를 불러오지 못했습니다.';
+                _switchState('error');
+            });
+    }
+
+    /* ── 드롭다운 채우기 ── */
+    function _populateSelector() {
+        var sel = document.getElementById('flow-start-select');
+        sel.innerHTML = '';
+        var ph = document.createElement('option');
+        ph.value = ''; ph.textContent = '-- 시작 함수 선택 --';
+        sel.appendChild(ph);
+        _allNodes.forEach(function (n) {
+            var opt = document.createElement('option');
+            opt.value = n.id;
+            opt.textContent = (n.class_name ? n.class_name + '.' : '') + (n.name || n.id);
+            sel.appendChild(opt);
+        });
+    }
+
+    /* ── BFS: 시작 노드에서 depth 단계까지 서브그래프 추출 ── */
+    function _extractSubgraph(startId, depth) {
+        var adjOut = {};
+        _allEdges.forEach(function (e) {
+            if (!adjOut[e.source]) adjOut[e.source] = [];
+            adjOut[e.source].push(e.target);
+        });
+        var visited = new Set([startId]);
+        var queue   = [{ id: startId, d: 0 }];
+        while (queue.length) {
+            var cur = queue.shift();
+            if (cur.d >= depth) continue;
+            (adjOut[cur.id] || []).forEach(function (tid) {
+                if (!visited.has(tid)) {
+                    visited.add(tid);
+                    queue.push({ id: tid, d: cur.d + 1 });
+                }
+            });
+        }
+        var nodeMap = {};
+        _allNodes.forEach(function (n) { nodeMap[n.id] = n; });
+        var subNodes = [];
+        visited.forEach(function (id) { if (nodeMap[id]) subNodes.push(nodeMap[id]); });
+        var subEdges = _allEdges.filter(function (e) {
+            return visited.has(e.source) && visited.has(e.target);
+        });
+        return { nodes: subNodes, edges: subEdges };
+    }
+
+    /* ── 그래프 렌더링 진입점 ── */
+    function _renderGraph() {
+        if (!_startId) { _switchState('idle'); return; }
+        _switchState('loading');
+        var sub = _extractSubgraph(_startId, _depth);
+        if (sub.nodes.length === 0) { _switchState('empty'); return; }
+        _switchState('idle');
+        try {
+            _renderD3(sub.nodes, sub.edges);
+            _renderTreePanel(sub.nodes, sub.edges);
+        } catch (err) {
+            console.error('[flow] D3 render error:', err);
+            document.getElementById('flow-error-msg').textContent =
+                '그래프 렌더링 중 오류가 발생했습니다.';
+            _switchState('error');
+        }
+    }
+
+    /* ── 링크 데이터 빌드 — source/target 객체 바인딩 ── */
+    function _buildLinkData(nodes, edges) {
+        var nodeById = {};
+        nodes.forEach(function (n) { nodeById[n.id] = n; });
+        return edges
+            .map(function (e) {
+                return { source: nodeById[e.source] || e.source,
+                         target: nodeById[e.target] || e.target };
+            })
+            .filter(function (l) {
+                return l.source && typeof l.source === 'object' &&
+                       l.target && typeof l.target === 'object';
+            });
+    }
+
+    /* ── 노드 그룹 생성 + 드래그 + 색상 코딩 [M1.AC 5.3/5.5] ── */
+    function _createFlowNodes(g, nodes) {
+        var sel = g.selectAll('.flow-node').data(nodes).enter().append('g')
+            .attr('class', 'flow-node')
+            .call(d3.drag()
+                .on('start', function (ev, d) {
+                    if (!ev.active && _sim) _sim.alphaTarget(0.3).restart();
+                    d.fx = d.x; d.fy = d.y;
+                })
+                .on('drag', function (ev, d) { d.fx = ev.x; d.fy = ev.y; })
+                .on('end',  function (ev, d) {
+                    if (!ev.active && _sim) _sim.alphaTarget(0);
+                    d.fx = null; d.fy = null;
+                }))
+            .on('click', function (ev, d) { ev.stopPropagation(); _onNodeClick(d); });
+        /* 결제 파일 강조 링 */
+        sel.filter(function (d) { return d.is_payment; })
+            .append('circle').attr('r', 20).attr('fill', 'none')
+            .attr('stroke', _T.primary).attr('stroke-width', 3).attr('stroke-opacity', 0.45);
+        /* 메인 노드 원 */
+        sel.append('circle').attr('r', 14)
+            .attr('fill', function (d) {
+                if (d.id === _startId) return _T.black;
+                if (d.is_sp_call)      return _T.purple;
+                if ((d.cc || 0) >= 15) return _T.danger;
+                return _T.white;
+            })
+            .attr('stroke', function (d) {
+                if (d.is_payment)      return _T.primary;
+                if (d.id === _startId) return _T.black;
+                return _T.border;
+            })
+            .attr('stroke-width', function (d) { return d.is_payment ? 2 : 1; });
+        /* 레이블 */
+        sel.append('text').attr('dy', '28px').attr('text-anchor', 'middle')
+            .attr('fill', _T.textSec).attr('font-size', '10px')
+            .text(function (d) {
+                var nm = d.name || d.id;
+                return nm.length > 14 ? nm.slice(0, 13) + '\u2026' : nm;
+            });
+        return sel;
+    }
+
+    /* ── D3 Force-Directed 렌더링 — 오케스트레이터 ── */
+    function _renderD3(nodes, edges) {
+        var svgEl  = document.getElementById('flow-svg');
+        var W      = svgEl.clientWidth  || 800;
+        var H      = svgEl.clientHeight || 580;
+        var svgSel = d3.select('#flow-svg');
+        svgSel.selectAll('g.main-g').remove();
+        if (_sim) { _sim.stop(); _sim = null; }
+        _zoom = d3.zoom().scaleExtent([0.15, 5])
+            .on('zoom', function (ev) { if (_g) _g.attr('transform', ev.transform); });
+        svgSel.call(_zoom);
+        _g = svgSel.append('g').attr('class', 'main-g');
+        var linkData = _buildLinkData(nodes, edges);
+        _linkSel = _g.selectAll('.flow-link').data(linkData).enter().append('path')
+            .attr('class', 'flow-link').attr('stroke', _T.border)
+            .attr('marker-end', 'url(#flow-arrow)');
+        _nodeSel = _createFlowNodes(_g, nodes);
+        _sim = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(linkData).id(function (d) { return d.id; }).distance(100))
+            .force('charge', d3.forceManyBody().strength(-280))
+            .force('center',    d3.forceCenter(W / 2, H / 2))
+            .force('collision', d3.forceCollide(32))
+            .on('tick', _tick);
+        svgSel.on('click', function () {
+            if (_nodeSel) _nodeSel.classed('dimmed', false);
+            if (_linkSel) _linkSel.classed('dimmed', false);
+            _selectedId = null;
+            _syncTreePanel(null);
+        });
+    }
+
+    /* ── 시뮬레이션 tick ── */
+    function _tick() {
+        if (_linkSel) {
+            _linkSel.attr('d', function (d) {
+                var sx = d.source.x || 0, sy = d.source.y || 0;
+                var tx = d.target.x || 0, ty = d.target.y || 0;
+                var dr = Math.sqrt((tx - sx) * (tx - sx) + (ty - sy) * (ty - sy));
+                return 'M' + sx + ',' + sy + 'A' + dr + ',' + dr + ' 0 0,1 ' + tx + ',' + ty;
+            });
+        }
+        if (_nodeSel) {
+            _nodeSel.attr('transform', function (d) {
+                return 'translate(' + (d.x || 0) + ',' + (d.y || 0) + ')';
+            });
+        }
+    }
+
+    /* ── 노드 클릭 → detail-box + call-tree-panel 동기화 ── */
+    function _onNodeClick(d) {
+        _selectedId = d.id;
+        /* detail-box 갱신 */
+        document.getElementById('flow-detail-box').classList.add('visible');
+        document.getElementById('flow-detail-name').textContent  = d.name  || d.id;
+        document.getElementById('flow-detail-class').textContent = d.class_name  || '—';
+        document.getElementById('flow-detail-file').textContent  =
+            (d.file_path || '—').split(/[/\\]/).pop();
+        var cc    = d.cc || 0;
+        var grade = cc >= 15 ? '매우높음' : cc >= 10 ? '높음' : cc >= 5 ? '중간' : '낮음';
+        var cls   = cc >= 10 ? 'cc-high' : cc >= 5 ? 'cc-mid' : 'cc-low';
+        document.getElementById('flow-detail-cc').innerHTML =
+            '<span class="cc-badge ' + cls + '">' + cc + ' (' + grade + ')</span>';
+        document.getElementById('flow-detail-calls').textContent =
+            d.call_count != null ? d.call_count : '—';
+        document.getElementById('flow-detail-line').textContent =
+            d.line_number != null ? d.line_number : '—';
+        /* call-tree-panel 항목 선택 동기화 */
+        _syncTreePanel(d.id);
+    }
+
+    /* ── 콜 트리 패널 렌더링 ── */
+    function _renderTreePanel(nodes, edges) {
+        if (!_startId) return;
+        var adjOut = {};
+        edges.forEach(function (e) {
+            if (!adjOut[e.source]) adjOut[e.source] = [];
+            adjOut[e.source].push(e.target);
+        });
+        var nodeMap = {};
+        nodes.forEach(function (n) { nodeMap[n.id] = n; });
+        var body = document.getElementById('flow-tree-panel-body');
+        body.innerHTML = '';
+        /* BFS 트리 순서로 출력 (들여쓰기 깊이) */
+        var visited = new Set([_startId]);
+        var queue   = [{ id: _startId, depth: 0 }];
+        while (queue.length) {
+            var cur = queue.shift();
+            var n   = nodeMap[cur.id];
+            if (!n) continue;
+            var cc = n.cc || 0;
+            var dotColor = n.id === _startId ? _T.black
+                         : n.is_sp_call      ? _T.purple
+                         : cc >= 15          ? _T.danger
+                         : _T.primary;
+            var ccCls = cc >= 10 ? 'cc-high' : cc >= 5 ? 'cc-mid' : 'cc-low';
+            var item  = document.createElement('div');
+            item.className      = 'tree-item';
+            item.dataset.nodeId = cur.id;
+            item.style.paddingLeft = (12 + cur.depth * 16) + 'px';
+            item.innerHTML =
+                '<span class="tree-dot" style="background:' + dotColor + '"></span>' +
+                '<span class="tree-name">' + _esc(n.name || cur.id) + '</span>' +
+                '<span class="tree-cc ' + ccCls + '">' + cc + '</span>';
+            /* 클로저로 nodeId 캡처 */
+            item.onclick = (function (nid) {
+                return function () { _highlightFromPanel(nid); };
+            }(cur.id));
+            body.appendChild(item);
+            (adjOut[cur.id] || []).forEach(function (tid) {
+                if (!visited.has(tid)) {
+                    visited.add(tid);
+                    queue.push({ id: tid, depth: cur.depth + 1 });
+                }
+            });
+        }
+    }
+
+    /* ── 패널 선택 항목 강조 ── */
+    function _syncTreePanel(nodeId) {
+        document.querySelectorAll('.tree-item').forEach(function (el) {
+            el.classList.toggle('selected', el.dataset.nodeId === nodeId);
+        });
+    }
+
+    /* ── 패널 클릭 → SVG 노드 detail-box 갱신 ── */
+    function _highlightFromPanel(nodeId) {
+        _selectedId = nodeId;
+        _syncTreePanel(nodeId);
+        if (_nodeSel) {
+            _nodeSel.each(function (d) {
+                if (d && d.id === nodeId) _onNodeClick(d);
+            });
+        }
+    }
+
+    /* ── HTML 이스케이프 (XSS 방어) ── */
+    function _esc(str) {
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /* ── 4-State 전환 ── */
+    function _switchState(state) {
+        document.getElementById('flow-container').dataset.state = state;
+    }
+
+    /* ── 줌 헬퍼 ── */
+    function _zoomBy(factor) {
+        if (!_zoom) return;
+        d3.select('#flow-svg').transition().duration(250).call(_zoom.scaleBy, factor);
+    }
+
+    /* ────────────────────────────────────────────
+       window.* 공개 함수 (onclick 핸들러용)
+    ──────────────────────────────────────────── */
+    window.flowOnSelectChange = function () {
+        var val = document.getElementById('flow-start-select').value;
+        _startId = val || null;
+        if (_startId) { _renderGraph(); } else { _switchState('idle'); }
+    };
+
+    window.flowDepthAdj = function (delta) {
+        _depth = Math.min(5, Math.max(1, _depth + delta));
+        document.getElementById('flow-depth-display').textContent = _depth;
+        if (_startId) _renderGraph();
+    };
+
+    window.flowRetry = function () {
+        _switchState('loading');
+        setTimeout(_init, 300);
+    };
+
+    window.flowCloseDetail = function () {
+        document.getElementById('flow-detail-box').classList.remove('visible');
+        _selectedId = null;
+        _syncTreePanel(null);
+    };
+
+    window.flowZoomIn  = function () { _zoomBy(1.3); };
+    window.flowZoomOut = function () { _zoomBy(1 / 1.3); };
+    window.flowZoomFit = function () {
+        if (!_zoom || !_g) return;
+        var svgEl = document.getElementById('flow-svg');
+        try {
+            var bb    = _g.node().getBBox();
+            var W     = svgEl.clientWidth  || 800;
+            var H     = svgEl.clientHeight || 580;
+            var scale = 0.88 * Math.min(W / bb.width, H / bb.height);
+            var tx    = W / 2 - scale * (bb.x + bb.width  / 2);
+            var ty    = H / 2 - scale * (bb.y + bb.height / 2);
+            d3.select('#flow-svg').transition().duration(400)
+                .call(_zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+        } catch (_) { /* getBBox 실패 시 무시 */ }
+    };
+
+    window.flowExportSVG = function () {
+        var svgEl  = document.getElementById('flow-svg');
+        var xml    = new XMLSerializer().serializeToString(svgEl);
+        var blob   = new Blob(
+            ['<?xml version="1.0" encoding="utf-8"?>\n' + xml],
+            { type: 'image/svg+xml' }
+        );
+        var url = URL.createObjectURL(blob);
+        var a   = document.createElement('a');
+        a.href = url; a.download = 'flow-graph.svg'; a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    /* ── 진입점 ── */
+    document.addEventListener('DOMContentLoaded', _init);
+
+}());
+</script>
+{% endblock %}

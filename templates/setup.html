@@ -1,0 +1,661 @@
+{% extends 'base.html' %}
+{% from 'macros/ui_components.html' import empty_state %}
+
+{% block title %}소스 연결 설정 — payletterCodeLab{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ================================================================
+   setup.html 전용 스타일
+   [GR-4.2] 색상/간격은 var(--token) 전용 — 하드코딩 hex 금지
+   [PR-8] CDN URL 없음 — 로컬 번들 전용
+   ================================================================ */
+
+.page-header { margin-bottom: var(--spacing-xl); }
+.page-title  { font-size: var(--font-size-h1); font-weight: 700; color: var(--color-text-primary); }
+.page-desc   { font-size: var(--font-size-body); color: var(--color-text-secondary); margin-top: var(--spacing-xs); }
+
+/* setup 컨테이너 — loading overlay 앵커 (position: relative) */
+#setup-container { position: relative; }
+
+/* ── 탭 바 ── */
+.tab-bar { display: flex; gap: var(--spacing-xs); border-bottom: 1px solid var(--color-border); margin-bottom: var(--spacing-lg); }
+.tab-btn {
+    padding: 10px var(--spacing-md); border: none; background: none; cursor: pointer;
+    font-size: var(--font-size-body); color: var(--color-text-secondary);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.tab-btn.active   { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 600; }
+.tab-btn:hover:not(.active) { color: var(--color-text-primary); }
+
+/* ── 탭 패널 ── */
+.tab-panel        { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── 폼 카드 ── */
+.form-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-lg);
+    box-shadow: var(--shadow-card); margin-bottom: var(--spacing-lg);
+}
+.form-group  { margin-bottom: var(--spacing-md); }
+.form-label  { display: block; font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin-bottom: var(--spacing-xs); }
+.form-input  {
+    width: 100%; padding: 9px var(--spacing-sm);
+    border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    font-size: var(--font-size-body); color: var(--color-text-primary);
+    background: var(--color-bg); transition: border-color 0.15s ease;
+}
+.form-input:focus { outline: none; border-color: var(--color-primary); }
+.form-checkbox-row { display: flex; align-items: center; gap: var(--spacing-sm); }
+.form-checkbox    { width: 16px; height: 16px; accent-color: var(--color-primary); cursor: pointer; }
+
+/* SSL 경고 배너 [M1.AC 1.7] — verify=False 선택 시 표시 */
+.ssl-warning {
+    display: none; background: #fffbeb; border: 1px solid var(--color-warning);
+    border-radius: var(--rounded-sm); padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 13px; color: #92400e; margin-top: var(--spacing-sm);
+}
+.ssl-warning.visible { display: block; }
+
+/* ── 버튼 ── */
+.btn-primary {
+    padding: 9px var(--spacing-md); border: none; border-radius: var(--rounded-sm);
+    background: var(--color-primary); color: var(--color-bg); cursor: pointer;
+    font-size: var(--font-size-body); font-weight: 500; transition: background 0.15s ease;
+}
+.btn-primary:hover    { background: var(--color-primary-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary {
+    padding: 9px var(--spacing-md); border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-primary); cursor: pointer;
+    font-size: var(--font-size-body); transition: background 0.15s ease;
+}
+.btn-secondary:hover { background: var(--color-surface); }
+.form-hint { font-size: 13px; color: var(--color-text-secondary); margin-bottom: var(--spacing-md); }
+
+/* ── 로딩 오버레이 — position:absolute, 동일 치수 차지 → CLS ≤ 0.1 [GR-4.3] ── */
+[data-region="loading-overlay"] {
+    display: none; position: absolute; inset: 0;
+    background: rgba(255, 255, 255, 0.92); z-index: 5;
+    flex-direction: column; align-items: center; justify-content: center;
+    border-radius: var(--border-radius-card); min-height: 200px;
+}
+.loading-spinner {
+    width: 36px; height: 36px; border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary); border-radius: var(--rounded-full);
+    animation: setup-spin 0.8s linear infinite; margin-bottom: var(--spacing-md);
+}
+.loading-label { font-size: var(--font-size-body); color: var(--color-text-secondary); }
+@keyframes setup-spin { to { transform: rotate(360deg); } }
+
+/* ── 에러 배너 영역 ── */
+[data-region="error-banner"] { display: none; margin-bottom: var(--spacing-lg); }
+
+/* ── 빈 상태 ── */
+[data-region="empty-cta"] { display: none; }
+
+/* ── 프로젝트·진행률 패널 ── */
+.panel-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-lg);
+    box-shadow: var(--shadow-card); margin-bottom: var(--spacing-lg);
+}
+.panel-title { font-size: var(--font-size-h3); font-weight: 600; color: var(--color-text-primary); margin-bottom: var(--spacing-md); }
+.project-list  { list-style: none; padding: 0; }
+.project-item  {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    padding: var(--spacing-sm) 0; border-bottom: 1px solid var(--color-border);
+}
+.project-item:last-child { border-bottom: none; }
+.project-name  { flex: 1; font-size: var(--font-size-body); color: var(--color-text-primary); }
+.project-path  { font-size: var(--font-size-caption); color: var(--color-text-muted); font-family: var(--font-family-code); }
+.actions-row   { display: flex; gap: var(--spacing-sm); align-items: center; margin-top: var(--spacing-md); }
+.select-label  { font-size: 13px; color: var(--color-text-secondary); display: flex; align-items: center; gap: var(--spacing-xs); }
+
+/* 진행률 패널 */
+.progress-list   { list-style: none; padding: 0; }
+.prog-item       { padding: var(--spacing-sm) 0; border-bottom: 1px solid var(--color-border); }
+.prog-item:last-child { border-bottom: none; }
+.prog-header     { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-xs); }
+.prog-name       { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+.prog-badge      { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--rounded-full); }
+.prog-badge-pending   { background: var(--color-surface); color: var(--color-text-secondary); }
+.prog-badge-cloning   { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.prog-badge-analyzing { background: var(--color-primary-light); color: var(--color-primary); }
+.prog-badge-done      { background: var(--color-success-bg); color: var(--color-success-text); }
+.prog-badge-failed    { background: var(--color-danger-light); color: var(--color-danger); }
+.prog-track      { height: 6px; background: var(--color-border); border-radius: var(--rounded-full); overflow: hidden; }
+.prog-fill       { height: 100%; background: var(--color-primary); border-radius: var(--rounded-full); transition: width 0.4s ease; width: 0%; }
+.prog-fill-done  { background: var(--color-success); }
+.prog-fill-failed{ background: var(--color-danger); }
+
+/* ── 4-State CSS 토글 ── */
+#setup-container[data-state="loading"]  [data-region="loading-overlay"] { display: flex; }
+#setup-container[data-state="loading"]  .setup-body { visibility: hidden; }
+#setup-container[data-state="error"]    [data-region="error-banner"]    { display: block; }
+#setup-container[data-state="empty"]    [data-region="empty-cta"]       { display: flex; }
+#setup-container[data-state="empty"]    .setup-body { display: none; }
+
+/* project-list-panel / analysis-progress-panel: JS 제어 */
+#project-list-panel       { display: none; }
+#analysis-progress-panel  { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">소스 연결 설정</h1>
+    <p class="page-desc">GitLab, GitHub 또는 로컬 폴더의 C# 코드베이스를 연결하여 분석을 시작합니다.</p>
+</div>
+
+{# ── 로드된 프로젝트 관리 테이블 ── #}
+<div id="loaded-projects-section" style="display:none;margin-bottom:var(--spacing-xl)">
+    <div style="background:var(--color-bg);border:1px solid var(--color-border);
+                border-radius:var(--border-radius-card);box-shadow:var(--shadow-card)">
+        {# 헤더 #}
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:var(--spacing-md) var(--spacing-lg);
+                    border-bottom:1px solid var(--color-border)">
+            <div style="display:flex;align-items:center;gap:var(--spacing-sm)">
+                <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px;color:var(--color-primary)" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span style="font-size:14px;font-weight:600;color:var(--color-text-primary)">로드된 프로젝트</span>
+                <span id="loaded-count-badge" style="background:var(--color-primary-light);color:var(--color-primary);
+                      font-size:11px;font-weight:600;padding:1px 8px;border-radius:var(--rounded-full)">0</span>
+            </div>
+            <div style="display:flex;gap:var(--spacing-sm);align-items:center">
+                <a href="/dashboard" style="font-size:12px;color:var(--color-primary);
+                   text-decoration:none;font-weight:500;display:flex;align-items:center;gap:4px">
+                    대시보드 보기
+                    <svg xmlns="http://www.w3.org/2000/svg" style="width:13px;height:13px" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/>
+                    </svg>
+                </a>
+                <button onclick="removeAllProjects()" style="font-size:12px;color:var(--color-danger);
+                        background:none;border:1px solid var(--color-danger);border-radius:var(--rounded-sm);
+                        padding:3px 10px;cursor:pointer">전체 제거</button>
+            </div>
+        </div>
+        {# 테이블 #}
+        <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                    <tr style="background:var(--color-surface)">
+                        <th style="text-align:left;padding:9px var(--spacing-md);color:var(--color-text-secondary);
+                                   font-weight:500;border-bottom:1px solid var(--color-border)">프로젝트명</th>
+                        <th style="text-align:right;padding:9px var(--spacing-md);color:var(--color-text-secondary);
+                                   font-weight:500;border-bottom:1px solid var(--color-border)">함수 수</th>
+                        <th style="text-align:right;padding:9px var(--spacing-md);color:var(--color-text-secondary);
+                                   font-weight:500;border-bottom:1px solid var(--color-border)">SP 호출</th>
+                        <th style="text-align:right;padding:9px var(--spacing-md);color:var(--color-text-secondary);
+                                   font-weight:500;border-bottom:1px solid var(--color-border)">고위험 함수</th>
+                        <th style="text-align:center;padding:9px var(--spacing-md);color:var(--color-text-secondary);
+                                   font-weight:500;border-bottom:1px solid var(--color-border)">상태</th>
+                        <th style="text-align:center;padding:9px var(--spacing-md);color:var(--color-text-secondary);
+                                   font-weight:500;border-bottom:1px solid var(--color-border)">관리</th>
+                    </tr>
+                </thead>
+                <tbody id="loaded-projects-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="setup-container" data-state="idle">
+
+    {# ── [loading] 로딩 오버레이 — position:absolute → CLS ≤ 0.1 보장 [GR-4.3] ── #}
+    <div data-region="loading-overlay" role="status" aria-live="polite">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <span class="loading-label">프로젝트 목록 불러오는 중...</span>
+    </div>
+
+    {# ── [error] 에러 배너 — JS에서 innerHTML 주입 ── #}
+    <div data-region="error-banner" id="error-banner-region" role="alert" aria-live="assertive"></div>
+
+    {# ── [empty] 빈 상태 ── #}
+    <div data-region="empty-cta">
+        {{ empty_state('프로젝트를 찾을 수 없습니다.', '다시 연결하기', '#') }}
+    </div>
+
+    {# ── [idle/error] 메인 폼 영역 ── #}
+    <div class="setup-body">
+
+        {# source-type-tabs #}
+        <div data-region="source-type-tabs" class="tab-bar" role="tablist" aria-label="소스 유형 선택">
+            <button class="tab-btn active" role="tab" aria-selected="true"
+                    data-tab="gitlab" onclick="switchSourceTab('gitlab')">GitLab</button>
+            <button class="tab-btn" role="tab" aria-selected="false"
+                    data-tab="github" onclick="switchSourceTab('github')">GitHub</button>
+            <button class="tab-btn" role="tab" aria-selected="false"
+                    data-tab="local" onclick="switchSourceTab('local')">로컬 폴더</button>
+        </div>
+
+        {# auth-form-panel — GitLab #}
+        <div id="form-gitlab" class="tab-panel active form-card" role="tabpanel">
+            <div class="form-group">
+                <label class="form-label" for="gitlab-url">GitLab 서버 URL</label>
+                <input id="gitlab-url" class="form-input" type="url"
+                       placeholder="https://gitlab.example.com" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="gitlab-token">Personal Access Token</label>
+                <input id="gitlab-token" class="form-input" type="password"
+                       placeholder="glpat-xxxxxxxxxxxxxxxxxxxx" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <div class="form-checkbox-row">
+                    <input id="gitlab-verify-ssl" class="form-checkbox" type="checkbox"
+                           checked onchange="toggleSslWarning(this.checked)">
+                    <label for="gitlab-verify-ssl" class="form-label" style="margin:0">SSL 인증서 검증</label>
+                </div>
+                {# SSL 경고 — verify=False 선택 시 렌더링 [M1.AC 1.7] #}
+                <div id="ssl-warning" class="ssl-warning" role="alert">
+                    ⚠ SSL 검증 비활성화 시 중간자 공격(MITM) 위험이 있습니다.
+                    내부 사설 인증서 환경에서만 사용하세요.
+                </div>
+            </div>
+            <button class="btn-primary" onclick="connectGitLab()">연결 테스트</button>
+        </div>
+
+        {# auth-form-panel — GitHub #}
+        <div id="form-github" class="tab-panel form-card" role="tabpanel">
+            <div class="form-group">
+                <label class="form-label" for="github-token">Personal Access Token (선택)</label>
+                <input id="github-token" class="form-input" type="password"
+                       placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="new-password">
+            </div>
+            <p class="form-hint">
+                폐쇄망 환경에서는 GitHub 연결이 불가합니다. 이미 클론된 경우 로컬 폴더 탭을 이용하세요.
+            </p>
+            <button class="btn-primary" onclick="connectGitHub()">연결 테스트</button>
+        </div>
+
+        {# auth-form-panel — 로컬 폴더 #}
+        <div id="form-local" class="tab-panel form-card" role="tabpanel">
+            <div class="form-group">
+                <label class="form-label" for="local-path">프로젝트 폴더 경로</label>
+                <input id="local-path" class="form-input" type="text"
+                       placeholder="C:\Projects\MyProject"
+                       autocomplete="off">
+            </div>
+            <p class="form-hint">이미 클론된 C# 프로젝트가 있는 폴더 경로를 직접 입력합니다.</p>
+            <button class="btn-primary" onclick="connectLocal()">경로 유효성 검증</button>
+        </div>
+
+        {# project-list-panel — 연결 성공 후 JS로 표시 #}
+        <div data-region="project-list-panel" id="project-list-panel" class="panel-card">
+            <h2 class="panel-title">프로젝트 선택</h2>
+            <ul class="project-list" id="project-list" role="list" aria-label="프로젝트 목록"></ul>
+            <div class="actions-row">
+                <label class="select-label">
+                    <input type="checkbox" id="select-all" class="form-checkbox"
+                           onchange="toggleSelectAll(this.checked)">
+                    전체 선택
+                </label>
+                <button class="btn-primary" id="start-btn" onclick="startAnalysis()" disabled>
+                    분석 시작
+                </button>
+            </div>
+        </div>
+
+        {# analysis-progress-panel — 분석 실행 중 JS로 표시 #}
+        <div data-region="analysis-progress-panel" id="analysis-progress-panel" class="panel-card">
+            <h2 class="panel-title">분석 진행 중</h2>
+            <ul class="progress-list" id="progress-list" role="list" aria-live="polite"></ul>
+        </div>
+
+    </div>{# /.setup-body #}
+
+</div>{# /#setup-container #}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/** 연결된 프로젝트 객체 배열 */
+var _projects = [];
+/** 분석 중 이탈 방지 플래그 [PR-8] */
+var _analysisRunning = false;
+/** 진행률 폴링 인터벌 ID */
+var _pollTimer = null;
+
+/** [PR-8] 분석 중 이탈 경고 — beforeunload 이벤트 */
+window.addEventListener('beforeunload', function (e) {
+    if (_analysisRunning) { e.preventDefault(); e.returnValue = ''; }
+});
+
+/**
+ * 소스 유형 탭 전환.
+ * @param {'gitlab'|'github'|'local'} tab
+ */
+function switchSourceTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
+        var active = btn.dataset.tab === tab;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('.tab-panel').forEach(function (panel) {
+        panel.classList.toggle('active', panel.id === 'form-' + tab);
+    });
+    // 탭 전환 시 에러 배너 닫기
+    var container = document.getElementById('setup-container');
+    if (container.dataset.state === 'error') {
+        switchState('#setup-container', 'idle');
+    }
+}
+
+/** SSL 검증 해제 시 경고 표시 [M1.AC 1.7] */
+function toggleSslWarning(checked) {
+    document.getElementById('ssl-warning').classList.toggle('visible', !checked);
+}
+
+/**
+ * 에러 배너를 동적 생성하고 error 상태로 전환.
+ * [security-standards.md §9.1] XSS 방지: 메시지는 _escapeHtml() 처리.
+ * @param {string}  message             오류 메시지
+ * @param {boolean} isGithubNetworkError GitHub 폐쇄망 오류 여부 [M1.AC 1.8]
+ */
+function showError(message, isGithubNetworkError) {
+    var html = '<div style="display:flex;align-items:center;gap:var(--spacing-sm);'
+        + 'background:var(--color-danger-light);border:1px solid var(--color-danger);'
+        + 'border-radius:var(--rounded-md);padding:var(--spacing-md)">'
+        + '<svg xmlns="http://www.w3.org/2000/svg" style="width:20px;height:20px;'
+        + 'color:var(--color-danger);flex-shrink:0" fill="none" viewBox="0 0 24 24" '
+        + 'stroke-width="1.5" stroke="currentColor" aria-hidden="true">'
+        + '<path stroke-linecap="round" stroke-linejoin="round" '
+        + 'd="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71'
+        + 'c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5'
+        + '-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/>'
+        + '</svg>'
+        + '<span style="flex:1;color:var(--color-danger)">' + _escapeHtml(message) + '</span>';
+    if (isGithubNetworkError) {
+        // [M1.AC 1.8] GitHub 폐쇄망 오류 → 로컬 폴더 탭 전환 버튼
+        html += '<button class="btn-secondary" onclick="switchSourceTab(\'local\')" '
+            + 'style="white-space:nowrap">로컬 폴더 탭으로 이동</button>';
+    }
+    html += '<button class="btn-secondary" style="white-space:nowrap" '
+        + 'onclick="switchState(\'#setup-container\',\'idle\')">닫기</button>'
+        + '</div>';
+    document.getElementById('error-banner-region').innerHTML = html;
+    switchState('#setup-container', 'error');
+}
+
+/** XSS 방지 HTML 이스케이프 [security-standards.md §9.1] */
+function _escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * 연결 성공 후 프로젝트 목록을 렌더링한다.
+ * @param {Array<{name: string, path: string}>} projects
+ */
+function renderProjectList(projects) {
+    _projects = projects || [];
+    if (!_projects.length) {
+        switchState('#setup-container', 'empty');
+        return;
+    }
+    var list = document.getElementById('project-list');
+    list.innerHTML = _projects.map(function (p, i) {
+        return '<li class="project-item">'
+            + '<input type="checkbox" class="form-checkbox project-checkbox" '
+            + 'id="proj-' + i + '" value="' + i + '" onchange="updateStartBtn()">'
+            + '<label for="proj-' + i + '" class="project-name">' + _escapeHtml(p.name) + '</label>'
+            + '<span class="project-path">' + _escapeHtml(p.path || '') + '</span>'
+            + '</li>';
+    }).join('');
+    document.getElementById('project-list-panel').style.display = 'block';
+    switchState('#setup-container', 'idle');
+}
+
+/** 전체 선택 토글 */
+function toggleSelectAll(checked) {
+    document.querySelectorAll('.project-checkbox').forEach(function (cb) { cb.checked = checked; });
+    updateStartBtn();
+}
+
+/** 분석 시작 버튼 활성화 갱신 */
+function updateStartBtn() {
+    var anyChecked = Array.from(document.querySelectorAll('.project-checkbox'))
+        .some(function (cb) { return cb.checked; });
+    document.getElementById('start-btn').disabled = !anyChecked;
+}
+
+/** GitLab 연결 테스트 */
+function connectGitLab() {
+    var url       = document.getElementById('gitlab-url').value.trim();
+    var token     = document.getElementById('gitlab-token').value.trim();
+    var verifySSL = document.getElementById('gitlab-verify-ssl').checked;
+    if (!url) { showError('GitLab 서버 URL을 입력하세요.', false); return; }
+    switchState('#setup-container', 'loading');
+    fetch('/api/sources/gitlab/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url, token: token, verify_ssl: verifySSL }),
+    }).then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (data.error) { showError(data.error, false); return; }
+        if (data.ssl_warning) { document.getElementById('ssl-warning').classList.add('visible'); }
+        renderProjectList(data.projects);
+    })
+    .catch(function (err) { showError('네트워크 오류: ' + err.message, false); });
+}
+
+/** GitHub 연결 테스트 */
+function connectGitHub() {
+    var token = document.getElementById('github-token').value.trim();
+    switchState('#setup-container', 'loading');
+    fetch('/api/sources/github/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token }),
+    }).then(function (res) {
+        return res.json().then(function (data) { return { status: res.status, data: data }; });
+    }).then(function (result) {
+        if (result.data.error) {
+            // 503 = 폐쇄망 네트워크 차단 [M1.EX-2] → 로컬 폴더 대안 버튼 포함
+            showError(result.data.error, result.status === 503);
+            return;
+        }
+        renderProjectList(result.data.projects);
+    })
+    .catch(function (err) { showError('네트워크 오류: ' + err.message, true); });
+}
+
+/** 로컬 폴더 경로 유효성 검증 */
+function connectLocal() {
+    var path = document.getElementById('local-path').value.trim();
+    if (!path) { showError('폴더 경로를 입력하세요.', false); return; }
+    switchState('#setup-container', 'loading');
+    fetch('/api/sources/local/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: path }),
+    }).then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (data.error) { showError(data.error, false); return; }
+        renderProjectList(data.projects);
+    })
+    .catch(function (err) { showError('네트워크 오류: ' + err.message, false); });
+}
+
+/** 선택된 프로젝트로 분석 시작 */
+function startAnalysis() {
+    var selected = Array.from(document.querySelectorAll('.project-checkbox:checked'))
+        .map(function (cb) { return _projects[parseInt(cb.value, 10)]; });
+    if (!selected.length) return;
+    _renderProgressPanel(selected);
+    _analysisRunning = true;
+    fetch('/api/analyze/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projects: selected }),
+    }).then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (data.error) { _analysisRunning = false; showError(data.error, false); return; }
+        _pollTimer = setInterval(pollProgress, 1000);
+    })
+    .catch(function (err) {
+        _analysisRunning = false;
+        showError('분석 시작 실패: ' + err.message, false);
+    });
+}
+
+/** 진행률 패널 초기 렌더링 */
+function _renderProgressPanel(projects) {
+    document.getElementById('progress-list').innerHTML = projects.map(function (p) {
+        var safeId = p.name.replace(/[^a-z0-9]/gi, '_');
+        return '<li class="prog-item" id="prog-' + safeId + '">'
+            + '<div class="prog-header">'
+            + '<span class="prog-name">' + _escapeHtml(p.name) + '</span>'
+            + '<span class="prog-badge prog-badge-pending">대기 중</span>'
+            + '</div>'
+            + '<div class="prog-track"><div class="prog-fill"></div></div>'
+            + '</li>';
+    }).join('');
+    document.getElementById('analysis-progress-panel').style.display = 'block';
+    document.getElementById('project-list-panel').style.display = 'none';
+    document.getElementById('start-btn').disabled = true;
+}
+
+/** 분석 진행률 폴링 — 전체 완료 시 대시보드로 이동 */
+function pollProgress() {
+    fetch('/api/analyze/progress')
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        var progress = data.progress || {};
+        var keys = Object.keys(progress);
+        // DOM 업데이트와 allSettled 판정을 분리 — every() early-exit으로 인한
+        // 이후 프로젝트 DOM 업데이트 누락 방지 (Command-Query Separation)
+        var allSettled = keys.length > 0;
+        keys.forEach(function (name) {
+            var item = progress[name];
+            var safeId = name.replace(/[^a-z0-9]/gi, '_');
+            var li = document.getElementById('prog-' + safeId);
+            if (li) {
+                var badge = li.querySelector('.prog-badge');
+                var fill  = li.querySelector('.prog-fill');
+                if (badge) {
+                    badge.textContent = item.status;
+                    badge.className = 'prog-badge ' + _statusBadgeClass(item.status);
+                }
+                if (fill) {
+                    fill.style.width = item.progress_pct + '%';
+                    fill.className   = 'prog-fill ' + _statusFillClass(item.status);
+                }
+            }
+            if (item.status !== '완료' && item.status !== '실패') { allSettled = false; }
+        });
+        if (allSettled) {
+            clearInterval(_pollTimer);
+            _analysisRunning = false;
+            window.location.href = '/dashboard';
+        }
+    })
+    .catch(function () { /* 폴링 오류 — 다음 주기에 재시도 */ });
+}
+
+/** 상태 문자열 → CSS 배지 클래스 */
+function _statusBadgeClass(status) {
+    var map = { '대기 중': 'prog-badge-pending', '클론 중': 'prog-badge-cloning',
+                '분석 중': 'prog-badge-analyzing', '완료': 'prog-badge-done', '실패': 'prog-badge-failed' };
+    return map[status] || 'prog-badge-pending';
+}
+
+/** 상태 문자열 → CSS fill 클래스 */
+function _statusFillClass(status) {
+    if (status === '완료') return 'prog-fill prog-fill-done';
+    if (status === '실패') return 'prog-fill prog-fill-failed';
+    return 'prog-fill';
+}
+
+/** 로드된 프로젝트 관리 테이블 렌더링 */
+function _loadCacheStatus() {
+    fetch('/api/analyze/results')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            _renderLoadedTable(data.results || {});
+        })
+        .catch(function() { /* 캐시 없음 — 섹션 미표시 */ });
+}
+
+function _renderLoadedTable(results) {
+    var names = Object.keys(results);
+    var section = document.getElementById('loaded-projects-section');
+    if (!names.length) { section.style.display = 'none'; return; }
+
+    document.getElementById('loaded-count-badge').textContent = names.length;
+
+    var tbody = document.getElementById('loaded-projects-tbody');
+    tbody.innerHTML = names.map(function(name, idx) {
+        var r = results[name];
+        var funcCount = (r.complexity || []).length;
+        var spCount   = (r.sp_calls   || []).length;
+        var highRisk  = (r.complexity || []).filter(function(f) { return f.cyclomatic_complexity >= 10; }).length;
+        var rowBg     = idx % 2 === 0 ? '' : 'background:var(--color-surface)';
+        return '<tr style="' + rowBg + ';border-bottom:1px solid var(--color-border)">'
+            + '<td style="padding:10px var(--spacing-md);color:var(--color-text-primary);font-weight:500">'
+            +     _escapeHtml(name) + '</td>'
+            + '<td style="padding:10px var(--spacing-md);text-align:right;color:var(--color-text-primary)">'
+            +     funcCount.toLocaleString() + '</td>'
+            + '<td style="padding:10px var(--spacing-md);text-align:right;color:var(--color-text-primary)">'
+            +     spCount.toLocaleString() + '</td>'
+            + '<td style="padding:10px var(--spacing-md);text-align:right">'
+            +     (highRisk > 0
+                    ? '<span style="color:var(--color-danger);font-weight:600">' + highRisk + '</span>'
+                    : '<span style="color:var(--color-success)">0</span>')
+            + '</td>'
+            + '<td style="padding:10px var(--spacing-md);text-align:center">'
+            +     '<span style="background:var(--color-success-bg);color:var(--color-success-text);'
+            +     'font-size:11px;font-weight:600;padding:2px 8px;border-radius:var(--rounded-full)">로드됨</span>'
+            + '</td>'
+            + '<td style="padding:10px var(--spacing-md);text-align:center">'
+            +     '<button onclick="removeProject(' + JSON.stringify(name) + ')" '
+            +     'style="font-size:12px;color:var(--color-danger);background:none;border:none;'
+            +     'cursor:pointer;padding:3px 6px;border-radius:var(--rounded-sm);'
+            +     'transition:background 0.1s ease" '
+            +     'onmouseover="this.style.background=\'var(--color-danger-light)\'" '
+            +     'onmouseout="this.style.background=\'none\'">'
+            +     '<svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px;vertical-align:middle" '
+            +     'fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">'
+            +     '<path stroke-linecap="round" stroke-linejoin="round" '
+            +     'd="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>'
+            +     '</svg> 제거</button>'
+            + '</td>'
+            + '</tr>';
+    }).join('');
+
+    section.style.display = 'block';
+}
+
+/** 프로젝트 개별 제거 */
+function removeProject(name) {
+    if (!confirm('"' + name + '" 프로젝트를 캐시에서 제거할까요?')) return;
+    fetch('/api/analyze/results/' + encodeURIComponent(name), { method: 'DELETE' })
+        .then(function(r) { return r.json(); })
+        .then(function() { _loadCacheStatus(); })
+        .catch(function(err) { alert('제거 실패: ' + err.message); });
+}
+
+/** 전체 제거 */
+function removeAllProjects() {
+    if (!confirm('로드된 프로젝트를 모두 제거할까요?')) return;
+    fetch('/api/analyze/results')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var names = Object.keys(data.results || {});
+            return Promise.all(names.map(function(name) {
+                return fetch('/api/analyze/results/' + encodeURIComponent(name), { method: 'DELETE' });
+            }));
+        })
+        .then(function() { _loadCacheStatus(); })
+        .catch(function(err) { alert('제거 실패: ' + err.message); });
+}
+
+document.addEventListener('DOMContentLoaded', _loadCacheStatus);
+</script>
+{% endblock %}

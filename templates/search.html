@@ -1,0 +1,402 @@
+{% extends 'base.html' %}
+{% from 'macros/ui_components.html' import empty_state, loading_skeleton %}
+
+{% block title %}전역 검색 — payletterCodeLab{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ================================================================
+   search.html 전용 스타일
+   [GR-4.2] 색상/간격은 var(--token) 전용 — 하드코딩 hex 금지
+   [PR-8] CDN URL 없음 — 로컬 번들 전용
+   ================================================================ */
+
+#results-container { position: relative; min-height: 120px; }
+
+/* ── 검색 입력 영역 ── */
+.search-form-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-lg);
+    box-shadow: var(--shadow-card); margin-bottom: var(--spacing-lg);
+}
+.search-input-row { display: flex; gap: var(--spacing-sm); margin-bottom: var(--spacing-sm); }
+.search-input {
+    flex: 1; padding: 10px var(--spacing-sm); border: 1px solid var(--color-border);
+    border-radius: var(--rounded-sm); font-size: var(--font-size-body);
+    color: var(--color-text-primary); background: var(--color-bg);
+    outline: none; transition: border-color 0.15s ease;
+}
+.search-input:focus { border-color: var(--color-primary); }
+.btn-search {
+    padding: 10px var(--spacing-lg); background: var(--color-primary); color: var(--color-bg);
+    border: none; border-radius: var(--rounded-sm); font-size: var(--font-size-body);
+    font-weight: 500; cursor: pointer; white-space: nowrap; transition: background 0.15s ease;
+}
+.btn-search:hover    { background: var(--color-primary-hover); }
+.btn-search:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── 옵션 툴바 ── */
+.search-options { display: flex; align-items: center; gap: var(--spacing-md); }
+.toggle-label { display: flex; align-items: center; gap: var(--spacing-xs);
+    font-size: var(--font-size-caption); color: var(--color-text-secondary); cursor: pointer; }
+.toggle-label input[type="checkbox"] { accent-color: var(--color-primary); cursor: pointer; }
+
+/* ── 결과 요약 바 ── */
+.summary-bar {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--rounded-sm); padding: var(--spacing-sm) var(--spacing-md);
+    margin-bottom: var(--spacing-md); font-size: var(--font-size-caption);
+    color: var(--color-text-secondary); display: flex; align-items: center; gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+.summary-keyword { font-weight: 600; color: var(--color-text-primary); }
+.summary-stat { white-space: nowrap; }
+.summary-export { margin-left: auto; }
+.btn-secondary {
+    padding: 7px var(--spacing-md); border: 1px solid var(--color-primary);
+    border-radius: var(--rounded-sm); background: var(--color-bg);
+    color: var(--color-primary); cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: background 0.15s ease;
+}
+.btn-secondary:hover { background: var(--color-primary-light); }
+
+/* ── 인라인 에러 배너 (인라인 스타일 대신 클래스 사용) ── */
+.inline-error-banner {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    background: var(--color-danger-light); border: 1px solid var(--color-danger);
+    border-radius: var(--rounded-md); padding: var(--spacing-md);
+}
+.inline-error-msg { flex: 1; color: var(--color-danger); }
+.action-row { margin-bottom: var(--spacing-md); }
+
+/* ── 결과 그룹 (details/summary) ── */
+.result-project { margin-bottom: var(--spacing-md); }
+.project-summary {
+    font-weight: 600; font-size: var(--font-size-h3); color: var(--color-text-primary);
+    padding: var(--spacing-sm) var(--spacing-md); background: var(--color-surface);
+    border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    cursor: pointer; list-style: none; display: flex; align-items: center;
+    gap: var(--spacing-sm);
+}
+.project-summary::-webkit-details-marker { display: none; }
+.result-file { margin: var(--spacing-xs) 0 var(--spacing-xs) var(--spacing-md); }
+.file-summary {
+    font-size: 13px; font-weight: 600; color: var(--color-primary);
+    padding: var(--spacing-xs) var(--spacing-sm); font-family: var(--font-family-code);
+    cursor: pointer; list-style: none;
+}
+.file-summary::-webkit-details-marker { display: none; }
+.hit-list { list-style: none; padding: 0; margin: 0 0 var(--spacing-xs) calc(var(--spacing-md) * 2); }
+.hit-item {
+    display: flex; align-items: flex-start; gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-sm); border-bottom: 1px solid var(--color-border);
+    font-size: 13px;
+}
+.hit-item:last-child { border-bottom: none; }
+.hit-line { color: var(--color-text-muted, var(--color-text-secondary)); min-width: 40px; flex-shrink: 0; font-family: var(--font-family-code); }
+.hit-snippet { font-family: var(--font-family-code); font-size: 12px; color: var(--color-text-primary); flex: 1; word-break: break-all; }
+.hit-snippet mark { background: var(--color-primary-light); color: var(--color-text-primary); border-radius: 2px; }
+.hit-func { flex-shrink: 0; }
+.hit-link { color: var(--color-primary); text-decoration: none; font-size: 11px; }
+.hit-link:hover { text-decoration: underline; }
+.hit-cc { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: var(--rounded-full); white-space: nowrap; }
+.hit-cc-low      { background: var(--color-success-bg);  color: var(--color-success-text); }
+.hit-cc-medium   { background: var(--color-warning-bg);  color: var(--color-warning-text); }
+.hit-cc-high     { background: var(--color-danger-bg);   color: var(--color-danger); }
+.hit-cc-critical { background: var(--color-critical-bg); color: #fff; }
+.sp-link { color: var(--color-info, #3b82f6); text-decoration: none; font-size: 11px; margin-left: var(--spacing-xs); }
+.sp-link:hover { text-decoration: underline; }
+
+/* ── 로딩 오버레이 ── */
+[data-region="loading-skeleton-list"] {
+    display: none; position: absolute; inset: 0;
+    background: var(--color-bg); z-index: 5;
+}
+/* ── 에러 / 빈 상태 ── */
+[data-region="error-banner"] { display: none; margin-bottom: var(--spacing-md); }
+[data-region="empty-state"]  { display: none; }
+
+/* ── 4-State CSS 토글 ── */
+#results-container[data-state="loading"] [data-region="loading-skeleton-list"] { display: block; }
+#results-container[data-state="loading"] .results-body { visibility: hidden; }
+#results-container[data-state="error"]  [data-region="error-banner"]           { display: block; }
+#results-container[data-state="empty"]  [data-region="empty-state"]            { display: flex; }
+#results-container[data-state="empty"]  .results-body                          { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header" style="margin-bottom:var(--spacing-xl)">
+    <h1 style="font-size:var(--font-size-h1);font-weight:700;color:var(--color-text-primary)">전역 검색</h1>
+    <p style="font-size:var(--font-size-body);color:var(--color-text-secondary);margin-top:var(--spacing-xs)">SP명, 클래스명, 메서드명을 전체 코드베이스에서 검색합니다.</p>
+</div>
+
+{# ── 검색 입력 폼 (항상 표시) ── #}
+<div class="search-form-card">
+    <div data-region="search-input-bar" class="search-input-row">
+        <input type="text" id="search-input" class="search-input"
+               placeholder="SP명, 클래스명, 메서드명 검색... (예: usp_GetPayment)"
+               onkeydown="if(event.key==='Enter') performSearch()"
+               maxlength="200" autocomplete="off">
+        <button id="search-btn" class="btn-search" onclick="performSearch()">검색</button>
+    </div>
+    <div data-region="search-options-toolbar" class="search-options">
+        <label class="toggle-label">
+            <input type="checkbox" id="regex-toggle"> 정규식 검색
+        </label>
+        <span style="font-size:var(--font-size-caption);color:var(--color-text-secondary)">
+            연결된 전체 프로젝트 대상
+        </span>
+    </div>
+</div>
+
+{# ── 결과 컨테이너 (4-State) ── #}
+<div id="results-container" data-state="idle">
+
+    {# loading #}
+    <div data-region="loading-skeleton-list" aria-busy="true" aria-label="검색 중">
+        {{ loading_skeleton(rows=6) }}
+    </div>
+
+    {# error #}
+    <div data-region="error-banner" id="search-error-region" role="alert" aria-live="assertive"></div>
+
+    {# empty #}
+    <div data-region="empty-state">
+        {{ empty_state('검색 결과가 없습니다. 다른 검색어를 시도해 보세요.') }}
+    </div>
+
+    {# idle 결과 본문 #}
+    <div class="results-body">
+        {# result-summary-bar #}
+        <div data-region="result-summary-bar" id="summary-bar" class="summary-bar" style="display:none">
+            <span>검색어: <span id="s-keyword" class="summary-keyword"></span></span>
+            <span id="s-projects" class="summary-stat"></span>
+            <span id="s-files" class="summary-stat"></span>
+            <span id="s-hits" class="summary-stat"></span>
+            <span id="s-time" class="summary-stat"></span>
+        </div>
+        {# export-action — result-summary-bar 형제 노드 (landmark 분리) #}
+        <div data-region="export-action" class="action-row" id="export-action-row" style="display:none">
+            <button class="btn-secondary" id="export-btn" onclick="exportExcel()">Excel 내보내기</button>
+        </div>
+
+        {# result-groups-list #}
+        <div data-region="result-groups-list" id="result-groups-list"></div>
+
+        {# 초기 안내 #}
+        <div id="search-placeholder" style="text-align:center;padding:var(--spacing-2xl);color:var(--color-text-secondary)">
+            검색어를 입력하고 검색 버튼을 클릭하거나 Enter를 누르세요.
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/** XSS 방지 HTML 이스케이프 [security-standards.md §9.1] */
+function _escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** CC 등급 → hit badge CSS 클래스 */
+function _hitCcClass(grade) {
+    var m = { '낮음': 'hit-cc-low', '중간': 'hit-cc-medium', '높음': 'hit-cc-high', '매우높음': 'hit-cc-critical' };
+    return m[grade] || 'hit-cc-low';
+}
+
+/** SP EXEC 패턴 — 스니펫에서 SP명 추출 */
+var _SP_EXEC_RE = /\bEXEC(?:UTE)?\s+\[?(\w+)\]?/i;
+var _SP_KW_RE = /^(?:usp_|sp_|proc_|fn_)/i;
+function _spNameFromSnippet(snippet) { var m = _SP_EXEC_RE.exec(snippet); return m ? m[1] : null; }
+function _isSpKeyword(kw) { return _SP_KW_RE.test(kw.trim()); }
+
+/** 키워드 하이라이트 (원문 문자열 → 안전한 HTML 반환) */
+function _highlightSnippet(text, keyword, isRegex) {
+    var parts = [];
+    try {
+        var pat = isRegex ? keyword : keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var re = new RegExp(pat, 'gi');
+        var last = 0;
+        var m;
+        while ((m = re.exec(text)) !== null) {
+            parts.push(_escapeHtml(text.slice(last, m.index)));
+            parts.push('<mark>' + _escapeHtml(m[0]) + '</mark>');
+            last = re.lastIndex;
+            if (re.lastIndex <= m.index) break;
+        }
+        parts.push(_escapeHtml(text.slice(last)));
+    } catch (e) {
+        return _escapeHtml(text);
+    }
+    return parts.join('');
+}
+
+/** 함수 룩업 테이블 구성: {file_path → [{line_start, function_name, cc, grade}]} */
+function _buildFuncLookup(results) {
+    var lookup = {};
+    Object.keys(results).forEach(function(proj) {
+        (results[proj].complexity || []).forEach(function(f) {
+            if (!lookup[f.file_path]) lookup[f.file_path] = [];
+            lookup[f.file_path].push(f);
+        });
+    });
+    Object.keys(lookup).forEach(function(fp) {
+        lookup[fp].sort(function(a,b){ return a.line_start - b.line_start; });
+    });
+    return lookup;
+}
+
+/** (file_path, lineNo)에 대응하는 함수 정보 반환 */
+function _funcAtLine(lookup, filePath, lineNo) {
+    var funcs = lookup[filePath];
+    if (!funcs || !funcs.length) return null;
+    var result = null;
+    for (var i = 0; i < funcs.length; i++) {
+        if (funcs[i].line_start <= lineNo) result = funcs[i];
+        else break;
+    }
+    return result;
+}
+
+/** 단일 히트 아이템 HTML 생성 */
+function _renderHitItem(lineNo, snippet, funcInfo, keyword, isRegex) {
+    var spName = _spNameFromSnippet(snippet);
+    var spLink = spName ? '<a class="sp-link" href="/sp-flow?sp=' + encodeURIComponent(spName) + '">[SP: ' + _escapeHtml(spName) + ']</a>' : '';
+    if (!spName && _isSpKeyword(keyword)) {
+        var kw = keyword.trim();
+        spLink = '<a class="sp-link" href="/sp-flow?sp=' + encodeURIComponent(kw) + '">[SP 흐름도]</a>';
+    }
+    var funcPart = '';
+    if (funcInfo) {
+        funcPart = '<a class="hit-link" href="/flow-graph?start=' + encodeURIComponent(funcInfo.function_name) + '">'
+            + _escapeHtml(funcInfo.function_name) + '</a>'
+            + ' <span class="hit-cc ' + _hitCcClass(funcInfo.grade) + '">' + funcInfo.cc + '</span>';
+    }
+    return '<li class="hit-item">'
+        + '<span class="hit-line">L' + lineNo + '</span>'
+        + '<span class="hit-snippet">' + _highlightSnippet(snippet, keyword, isRegex) + '</span>'
+        + '<span class="hit-func">' + funcPart + spLink + '</span>'
+        + '</li>';
+}
+
+/** 파일 그룹 HTML 생성 */
+function _renderFileGroup(filePath, hits, lookup, keyword, isRegex) {
+    var fileName = filePath.split(/[\\/]/).pop();
+    var items = hits.map(function(hit) {
+        var lineNo = Array.isArray(hit) ? hit[0] : hit.line_no;
+        var snippet = Array.isArray(hit) ? hit[1] : hit.snippet;
+        return _renderHitItem(lineNo, snippet, _funcAtLine(lookup, filePath, lineNo), keyword, isRegex);
+    }).join('');
+    return '<details class="result-file" open>'
+        + '<summary class="file-summary">' + _escapeHtml(fileName) + ' (' + hits.length + '건)</summary>'
+        + '<ul class="hit-list">' + items + '</ul>'
+        + '</details>';
+}
+
+/** 프로젝트 그룹 HTML 생성 */
+function _renderProjectGroup(proj, fileGroups, totalHits) {
+    return '<details class="result-project" open>'
+        + '<summary class="project-summary">' + _escapeHtml(proj) + ' (' + totalHits + '건)</summary>'
+        + fileGroups
+        + '</details>';
+}
+
+/** 전체 결과 그룹 렌더링 */
+function _renderResultGroups(searchResults, lookup, keyword, isRegex) {
+    var html = '';
+    Object.keys(searchResults).forEach(function(proj) {
+        var projHits = searchResults[proj];
+        var fileGroupsHtml = '';
+        var projTotal = 0;
+        Object.keys(projHits).forEach(function(fp) {
+            var hits = projHits[fp];
+            projTotal += hits.length;
+            fileGroupsHtml += _renderFileGroup(fp, hits, lookup, keyword, isRegex);
+        });
+        html += _renderProjectGroup(proj, fileGroupsHtml, projTotal);
+    });
+    document.getElementById('result-groups-list').innerHTML = html;
+}
+
+/** 요약 바 렌더링 */
+function _renderSummaryBar(searchResults, keyword, elapsedMs) {
+    var projCount = Object.keys(searchResults).length;
+    var fileCount = 0;
+    var hitCount = 0;
+    Object.keys(searchResults).forEach(function(p) {
+        var pHits = searchResults[p];
+        Object.keys(pHits).forEach(function(fp) { fileCount++; hitCount += pHits[fp].length; });
+    });
+    document.getElementById('s-keyword').textContent = '"' + keyword + '"';
+    document.getElementById('s-projects').textContent = '프로젝트 ' + projCount + '개';
+    document.getElementById('s-files').textContent = '파일 ' + fileCount + '개';
+    document.getElementById('s-hits').textContent = '위치 ' + hitCount + '건';
+    document.getElementById('s-time').textContent = (elapsedMs / 1000).toFixed(2) + '초';
+    document.getElementById('summary-bar').style.display = '';
+    document.getElementById('export-action-row').style.display = '';
+    document.getElementById('search-placeholder').style.display = 'none';
+}
+
+/** 에러 배너 표시 */
+function _showSearchError(message) {
+    var html = '<div class="inline-error-banner">'
+        + '<span class="inline-error-msg">' + _escapeHtml(message) + '</span>'
+        + '</div>';
+    document.getElementById('search-error-region').innerHTML = html;
+    switchState('#results-container', 'error');
+}
+
+/** Excel 내보내기 ([M1.AC 3.5]) */
+function exportExcel() {
+    var btn = document.getElementById('export-btn');
+    btn.disabled = true; btn.textContent = '생성 중...';
+    window.location.href = '/api/export/excel';
+    setTimeout(function() { btn.disabled = false; btn.textContent = 'Excel 내보내기'; }, 3000);
+}
+
+/** 분석 결과 사전 로드 (함수 룩업용) */
+var _funcLookup = {};
+function _preloadFuncLookup() {
+    fetch('/api/analyze/results')
+        .then(function(res) { return res.ok ? res.json() : Promise.resolve({results:{}}); })
+        .then(function(data) { _funcLookup = _buildFuncLookup(data.results || {}); })
+        .catch(function() {});
+}
+
+/** 검색 실행 */
+function performSearch() {
+    var keyword = document.getElementById('search-input').value.trim();
+    if (!keyword) { document.getElementById('search-input').focus(); return; }
+    var isRegex = document.getElementById('regex-toggle').checked;
+    var btn = document.getElementById('search-btn');
+    btn.disabled = true;
+    switchState('#results-container', 'loading');
+    var t0 = performance.now();
+    fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: keyword, regex_mode: isRegex })
+    })
+        .then(function(res) {
+            if (!res.ok) return res.json().then(function(d){ throw new Error(d.error || 'HTTP ' + res.status); });
+            return res.json();
+        })
+        .then(function(data) {
+            var searchResults = data.results || {};
+            var elapsed = performance.now() - t0;
+            if (!Object.keys(searchResults).length) { switchState('#results-container', 'empty'); return; }
+            _renderSummaryBar(searchResults, keyword, elapsed);
+            _renderResultGroups(searchResults, _funcLookup, keyword, isRegex);
+            switchState('#results-container', 'idle');
+        })
+        .catch(function(err) { _showSearchError('검색 실패: ' + err.message); })
+        .finally(function() { btn.disabled = false; });
+}
+
+document.addEventListener('DOMContentLoaded', _preloadFuncLookup);
+</script>
+{% endblock %}

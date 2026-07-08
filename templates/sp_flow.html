@@ -1,0 +1,674 @@
+{% extends 'base.html' %}
+
+{% block title %}SP 흐름도 — payletterCodeLab{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ================================================================
+   sp_flow.html 전용 스타일
+   screen_ref: sp-flow
+   [GR-4.2] 색상/간격은 var(--token) 전용 — 하드코딩 hex 금지
+   [PR-8]   CDN URL 없음 — 로컬 번들 전용
+   ================================================================ */
+
+#sp-container { position: relative; }
+
+/* ── SP 통계 카드 행 (sp-stats-row) ── */
+[data-region="sp-stats-row"] {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+.stat-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    padding: var(--spacing-md); display: flex; flex-direction: column; gap: 4px;
+}
+.stat-label { font-size: var(--font-size-caption); color: var(--color-text-secondary); }
+.stat-value { font-size: var(--font-size-h2); font-weight: 700; color: var(--color-text-primary); }
+.stat-value.danger { color: var(--color-danger); }
+.stat-value.primary { color: var(--color-primary); }
+
+/* ── 메인 레이아웃 ── */
+.sp-main { display: flex; gap: var(--spacing-md); align-items: flex-start; }
+
+/* ── SP 목록 패널 (좌측) ── */
+[data-region="sp-list-panel"] {
+    width: 240px; min-width: 240px; background: var(--color-bg);
+    border: 1px solid var(--color-border); border-radius: var(--border-radius-card);
+    box-shadow: var(--shadow-card); display: flex; flex-direction: column; max-height: 680px;
+}
+.sp-panel-header {
+    padding: var(--spacing-sm) var(--spacing-md); border-bottom: 1px solid var(--color-border);
+    font-size: 13px; font-weight: 600; color: var(--color-text-primary); flex-shrink: 0;
+}
+.sp-filter-wrap {
+    padding: var(--spacing-xs) var(--spacing-sm); border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+}
+[data-region="sp-filter-input"] {
+    width: 100%; padding: 5px 8px; font-size: 12px;
+    border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-primary); outline: none;
+    box-sizing: border-box;
+}
+[data-region="sp-filter-input"]:focus { border-color: var(--color-primary); }
+.sp-list-body { overflow-y: auto; flex: 1; }
+.sp-list-item {
+    display: flex; align-items: center; gap: 6px; padding: 7px var(--spacing-sm);
+    cursor: pointer; transition: background 0.1s ease; border-bottom: 1px solid var(--color-border);
+    font-size: 12px;
+}
+.sp-list-item:hover    { background: var(--color-surface); }
+.sp-list-item.selected { background: var(--color-primary-light); }
+.sp-list-item.dead .sp-name { text-decoration: line-through; color: var(--color-text-secondary); }
+.sp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--color-text-primary); }
+.sp-call-count { font-size: 11px; color: var(--color-text-secondary); flex-shrink: 0; }
+.sp-badge {
+    font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: var(--rounded-full);
+    flex-shrink: 0;
+}
+.sp-badge.payment { background: var(--color-primary-light); color: var(--color-primary); }
+.sp-badge.normal  { background: var(--color-surface); color: var(--color-text-secondary); }
+
+/* ── 캔버스 영역 (우측) ── */
+.sp-canvas-area {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--spacing-md);
+}
+
+/* ── 캔버스 헤더 (canvas-header) ── */
+[data-region="canvas-header"] {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    padding: var(--spacing-sm) var(--spacing-md);
+    display: flex; align-items: center; gap: var(--spacing-md); flex-wrap: wrap;
+}
+.canvas-sp-name {
+    font-size: var(--font-size-h3); font-weight: 700; color: var(--color-text-primary);
+}
+.canvas-meta { font-size: 12px; color: var(--color-text-secondary); }
+.canvas-meta span { font-weight: 600; color: var(--color-text-primary); }
+
+/* ── D3 그래프 카드 (graph-canvas) ── */
+.sp-graph-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card); overflow: hidden;
+}
+.sp-graph-inner { position: relative; }
+#sp-svg {
+    display: block; width: 100%; height: 400px;
+    background: var(--color-surface); cursor: move;
+}
+#sp-svg:active { cursor: move; }
+
+/* ── 내보내기 영역 (export-action) ── */
+[data-region="export-action"] {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+    display: flex; justify-content: flex-end; gap: var(--spacing-sm);
+}
+.btn-export {
+    padding: 7px var(--spacing-md); border: 1px solid var(--color-primary);
+    border-radius: var(--rounded-sm); background: var(--color-bg);
+    color: var(--color-primary); cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: background 0.15s ease;
+}
+.btn-export:hover { background: var(--color-primary-light); }
+.btn-export-excel {
+    padding: 7px var(--spacing-md); border: 1px solid var(--color-success);
+    border-radius: var(--rounded-sm); background: var(--color-bg);
+    color: var(--color-success); cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: background 0.15s ease;
+}
+.btn-export-excel:hover { background: var(--color-success-light); }
+
+/* ── 호출 위치 테이블 (caller-table) ── */
+.caller-table-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card); overflow: hidden;
+}
+.caller-table-header {
+    padding: var(--spacing-sm) var(--spacing-md); border-bottom: 1px solid var(--color-border);
+    font-size: 13px; font-weight: 600; color: var(--color-text-primary);
+    display: flex; align-items: center; justify-content: space-between;
+}
+table[data-region="caller-table"] {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+}
+table[data-region="caller-table"] th {
+    padding: 7px var(--spacing-sm); background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border); text-align: left;
+    font-weight: 600; color: var(--color-text-secondary); font-size: 11px;
+}
+table[data-region="caller-table"] td {
+    padding: 7px var(--spacing-sm); border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-primary);
+}
+.method-link {
+    color: var(--color-primary); cursor: pointer; text-decoration: none;
+}
+.method-link:hover { text-decoration: underline; }
+.btn-more {
+    display: none; margin: var(--spacing-sm) auto; padding: 6px var(--spacing-md);
+    border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-secondary);
+    cursor: pointer; font-size: 12px; transition: background 0.15s ease;
+}
+.btn-more.visible { display: block; }
+.btn-more:hover { background: var(--color-surface); }
+
+/* ── 로딩 스켈레톤 ── */
+[data-region="loading-skeleton-canvas"] {
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    gap: var(--spacing-md); height: 480px;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    margin-bottom: var(--spacing-lg);
+}
+.skeleton-spinner {
+    width: 40px; height: 40px; border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary); border-radius: 50%;
+    animation: sp-spin 0.8s linear infinite;
+}
+@keyframes sp-spin { to { transform: rotate(360deg); } }
+.skeleton-label { color: var(--color-text-secondary); font-size: var(--font-size-body); }
+
+/* ── 에러 배너 ── */
+[data-region="error-banner"] {
+    display: none; align-items: center; gap: var(--spacing-sm);
+    background: var(--color-danger-light); border: 1px solid var(--color-danger);
+    border-radius: var(--rounded-md); padding: var(--spacing-sm) var(--spacing-md);
+    margin-bottom: var(--spacing-md); font-size: 13px; color: var(--color-danger);
+}
+[data-region="error-banner"].visible { display: flex; }
+.btn-go-dashboard {
+    margin-left: auto; padding: 5px 12px; background: var(--color-danger);
+    color: #ffffff; border: none; border-radius: var(--rounded-sm);
+    cursor: pointer; font-size: 12px; transition: opacity 0.15s ease;
+    text-decoration: none;
+}
+.btn-go-dashboard:hover { opacity: 0.85; }
+
+/* ── 빈 상태 ── */
+[data-region="empty-state"] {
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    gap: var(--spacing-md); height: 480px;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    margin-bottom: var(--spacing-lg); color: var(--color-text-secondary);
+}
+[data-region="empty-state"].visible { display: flex; }
+.empty-icon { font-size: 36px; opacity: 0.3; }
+.empty-text { font-size: var(--font-size-body); }
+
+/* ── 4-State 전환 ── */
+#sp-container[data-state="loading"] [data-region="loading-skeleton-canvas"] { display: flex; }
+#sp-container[data-state="loading"] .sp-main                               { display: none; }
+#sp-container[data-state="loading"] [data-region="sp-stats-row"]           { display: none !important; }
+#sp-container[data-state="loading"] [data-region="error-banner"]           { display: none !important; }
+#sp-container[data-state="loading"] [data-region="empty-state"]            { display: none !important; }
+#sp-container[data-state="error"]   [data-region="error-banner"]           { display: flex; }
+#sp-container[data-state="error"]   .sp-main                               { display: none; }
+#sp-container[data-state="error"]   [data-region="sp-stats-row"]           { display: none !important; }
+#sp-container[data-state="error"]   [data-region="empty-state"]            { display: none !important; }
+#sp-container[data-state="empty"]   [data-region="empty-state"]            { display: flex; }
+#sp-container[data-state="empty"]   .sp-main                               { display: none; }
+#sp-container[data-state="empty"]   [data-region="sp-stats-row"]           { display: none !important; }
+#sp-container[data-state="idle"]    .sp-main                               { display: flex; }
+
+/* ── D3 노드 스타일 ── */
+.sp-node { cursor: pointer; }
+.sp-link { fill: none; stroke-width: 1.5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="sp-container" data-state="loading">
+
+  <!-- SP 통계 카드 행 -->
+  <div data-region="sp-stats-row">
+    <div class="stat-card">
+      <span class="stat-label">총 SP</span>
+      <span class="stat-value" id="sp-stat-total">—</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">총 호출</span>
+      <span class="stat-value" id="sp-stat-calls">—</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Dead SP</span>
+      <span class="stat-value danger" id="sp-stat-dead">—</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">다수 호출 SP</span>
+      <span class="stat-value primary" id="sp-stat-multi">—</span>
+    </div>
+  </div>
+
+  <!-- 로딩 스켈레톤 -->
+  <div data-region="loading-skeleton-canvas">
+    <div class="skeleton-spinner"></div>
+    <span class="skeleton-label">SP 흐름 데이터 로드 중...</span>
+  </div>
+
+  <!-- 에러 배너 -->
+  <div data-region="error-banner">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2a10 10 0 100 20A10 10 0 0012 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+    </svg>
+    <span id="sp-error-msg">SP 탐지 중 오류가 발생했습니다.</span>
+    <a class="btn-go-dashboard" href="/dashboard">대시보드로 이동</a>
+  </div>
+
+  <!-- 빈 상태 -->
+  <div data-region="empty-state">
+    <div class="empty-icon">&#128203;</div>
+    <span class="empty-text">탐지된 SP가 없습니다</span>
+  </div>
+
+  <!-- 메인 영역 (idle) -->
+  <div class="sp-main">
+
+    <!-- SP 목록 패널 (좌측) -->
+    <div data-region="sp-list-panel">
+      <div class="sp-panel-header">SP 목록</div>
+      <div class="sp-filter-wrap">
+        <input type="text" data-region="sp-filter-input" id="sp-filter-input"
+               placeholder="SP 이름 검색..." oninput="spFilterInput()" />
+      </div>
+      <div class="sp-list-body" id="sp-list-body"></div>
+    </div>
+
+    <!-- 캔버스 영역 (우측) -->
+    <div class="sp-canvas-area">
+
+      <!-- 캔버스 헤더 -->
+      <div data-region="canvas-header">
+        <span class="canvas-sp-name" id="sp-canvas-name">SP를 선택하세요</span>
+        <span class="canvas-meta">
+          총 호출 위치 <span id="sp-canvas-call-count">—</span>개 /
+          프로젝트 <span id="sp-canvas-project-count">—</span>개
+        </span>
+      </div>
+
+      <!-- D3 방사형 그래프 -->
+      <div class="sp-graph-card">
+        <div class="sp-graph-inner" data-region="graph-canvas">
+          <svg id="sp-svg">
+            <defs>
+              <marker id="sp-arrow" viewBox="0 -5 10 10" refX="22" refY="0"
+                      markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0,-5L10,0L0,5" fill="#94a3b8"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+        <!-- 내보내기 -->
+        <div data-region="export-action">
+          <button class="btn-export-excel" onclick="spExportExcel()">Excel 내보내기</button>
+          <button class="btn-export"       onclick="spExportSVG()">SVG 내보내기</button>
+        </div>
+      </div>
+
+      <!-- 호출 위치 테이블 -->
+      <div class="caller-table-card">
+        <div class="caller-table-header">
+          <span>호출 위치 상세</span>
+          <span id="sp-table-count" style="font-size:12px;font-weight:400;color:var(--color-text-secondary)"></span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table data-region="caller-table" id="sp-caller-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>메서드명</th>
+                <th>클래스</th>
+                <th>파일</th>
+                <th>프로젝트</th>
+                <th>Line</th>
+              </tr>
+            </thead>
+            <tbody id="sp-caller-tbody"></tbody>
+          </table>
+        </div>
+        <button class="btn-more" id="sp-btn-more" onclick="spShowMore()">더 보기</button>
+      </div>
+
+    </div><!-- /sp-canvas-area -->
+  </div><!-- /sp-main -->
+
+</div><!-- /sp-container -->
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/d3.v7.min.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    /* ── D3 SVG 색상 상수 (CSS var() 직접 사용 불가) ── */
+    var _T = {
+        primary: '#12ccc1',
+        danger:  '#ef4444',
+        warning: '#f59e0b',
+        info:    '#3b82f6',
+        purple:  '#8b5cf6',
+        white:   '#ffffff',
+        border:  '#e2e8f0',
+        textSec: '#64748b',
+        surface: '#f4f6f8'
+    };
+
+    /* ── 모듈 상태 ── */
+    var _spTree      = {};   /* {sp_name: [SPCallInfo...]} */
+    var _spNames     = [];   /* 필터 후 표시 목록 */
+    var _allSpNames  = [];   /* 전체 SP 이름 목록 */
+    var _selectedSp  = null;
+    var _allCallers  = [];   /* 선택된 SP의 모든 호출 목록 */
+    var _shownRows   = 10;
+    var _zoom        = null;
+    var _g           = null;
+    var _sim         = null;
+
+    /* ── 초기화 ── */
+    function _init() {
+        _switchState('loading');
+        fetch('/api/graph/flow/sp')
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (data) {
+                var calls = data.sp_calls || [];
+                /* SP명 기준 그룹화 */
+                _spTree = {};
+                calls.forEach(function (c) {
+                    if (!_spTree[c.sp_name]) _spTree[c.sp_name] = [];
+                    _spTree[c.sp_name].push(c);
+                });
+                _allSpNames = Object.keys(_spTree).sort();
+                _spNames    = _allSpNames.slice();
+
+                if (_allSpNames.length === 0) {
+                    _switchState('empty');
+                    return;
+                }
+
+                /* 통계 카드 갱신 */
+                var totalCalls = calls.length;
+                var multiSp = _allSpNames.filter(function (n) {
+                    return _spTree[n].length > 1;
+                }).length;
+                /* Dead SP: is_dead 플래그가 있는 항목 */
+                var deadSp = _allSpNames.filter(function (n) {
+                    return _spTree[n].some(function (c) { return c.is_dead; });
+                }).length;
+                document.getElementById('sp-stat-total').textContent = _allSpNames.length;
+                document.getElementById('sp-stat-calls').textContent = totalCalls;
+                document.getElementById('sp-stat-dead').textContent  = deadSp;
+                document.getElementById('sp-stat-multi').textContent = multiSp;
+
+                _renderSpList();
+                _switchState('idle');
+
+                /* URL 파라미터 ?sp= 딥링크 처리 [M1.AC 6.5] */
+                var urlSp = new URLSearchParams(window.location.search).get('sp');
+                if (urlSp && _spTree[urlSp]) {
+                    _selectSp(urlSp);
+                } else if (_allSpNames.length > 0) {
+                    _selectSp(_allSpNames[0]);
+                }
+            })
+            .catch(function (err) {
+                console.error('[sp_flow] fetch error:', err);
+                document.getElementById('sp-error-msg').textContent =
+                    'SP 탐지 데이터를 불러오지 못했습니다.';
+                _switchState('error');
+            });
+    }
+
+    /* ── SP 목록 패널 렌더링 ── */
+    function _renderSpList() {
+        var body    = document.getElementById('sp-list-body');
+        var filter  = (document.getElementById('sp-filter-input').value || '').toLowerCase();
+        var visible = _allSpNames.filter(function (n) {
+            return n.toLowerCase().indexOf(filter) >= 0;
+        });
+        _spNames = visible;
+        body.innerHTML = '';
+        visible.forEach(function (spName) {
+            var callers   = _spTree[spName] || [];
+            var isPay     = callers.some(function (c) { return c.category === 'payment'; });
+            var isDead    = callers.some(function (c) { return c.is_dead; });
+            var item = document.createElement('div');
+            item.className = 'sp-list-item' + (isDead ? ' dead' : '') +
+                             (spName === _selectedSp ? ' selected' : '');
+            item.dataset.spName = spName;
+            item.innerHTML =
+                '<span class="sp-name">' + _esc(spName) + '</span>' +
+                '<span class="sp-call-count">' + callers.length + '</span>' +
+                '<span class="sp-badge ' + (isPay ? 'payment' : 'normal') + '">' +
+                    (isPay ? '결제' : '일반') + '</span>';
+            item.onclick = (function (name) {
+                return function () { _selectSp(name); };
+            }(spName));
+            body.appendChild(item);
+        });
+    }
+
+    /* ── SP 선택 ── */
+    function _selectSp(spName) {
+        _selectedSp = spName;
+        _allCallers = _spTree[spName] || [];
+        _shownRows  = 10;
+        /* 목록 선택 강조 */
+        document.querySelectorAll('.sp-list-item').forEach(function (el) {
+            el.classList.toggle('selected', el.dataset.spName === spName);
+        });
+        /* Dead SP 클릭 시 "호출자 없음" 표시 */
+        var isDead = _allCallers.some(function (c) { return c.is_dead; });
+        /* 캔버스 헤더 갱신 */
+        var projects = new Set(_allCallers.map(function (c) { return c.project; }));
+        document.getElementById('sp-canvas-name').textContent         = spName;
+        document.getElementById('sp-canvas-call-count').textContent   = _allCallers.length;
+        document.getElementById('sp-canvas-project-count').textContent = projects.size;
+        /* D3 그래프 렌더링 */
+        if (isDead || _allCallers.length === 0) {
+            _renderDeadState();
+        } else {
+            _renderRadialGraph(spName, _allCallers);
+        }
+        /* 호출 테이블 렌더링 */
+        _renderCallerTable(_allCallers, _shownRows);
+    }
+
+    /* ── Dead SP 상태 표시 ── */
+    function _renderDeadState() {
+        var svgEl = document.getElementById('sp-svg');
+        d3.select('#sp-svg').selectAll('g.main-g').remove();
+        d3.select('#sp-svg')
+            .append('g').attr('class', 'main-g')
+            .append('text')
+                .attr('x', (svgEl.clientWidth || 800) / 2)
+                .attr('y', (svgEl.clientHeight || 400) / 2)
+                .attr('text-anchor', 'middle').attr('fill', _T.textSec).attr('font-size', '14px')
+                .text('호출자 없음 (Dead SP)');
+    }
+
+    /* ── 호출자 노드 빌드 — 중복 제거 + 방사형 초기 위치 ── */
+    function _buildCallerNodes(callers, CX, CY, r) {
+        var callerMap = {};
+        callers.forEach(function (c) {
+            var key = c.class_name + '::' + c.method_name;
+            if (!callerMap[key]) {
+                callerMap[key] = {
+                    id: key, name: c.method_name, class_name: c.class_name,
+                    project: c.project, cc: c.cc || 0, category: c.category, count: 0
+                };
+            }
+            callerMap[key].count++;
+        });
+        var nodes = Object.values(callerMap);
+        nodes.forEach(function (n, i) {
+            var angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+            n.x = CX + r * Math.cos(angle);
+            n.y = CY + r * Math.sin(angle);
+        });
+        return nodes;
+    }
+
+    /* ── SP 중앙 노드 DOM 생성 ── */
+    function _createSpCenterNode(nodeSel) {
+        var spSel = nodeSel.filter(function (d) { return d.isSp; });
+        spSel.append('circle').attr('r', 22)
+            .attr('fill', _T.purple).attr('stroke', _T.white).attr('stroke-width', 2);
+        spSel.append('text').attr('dy', '0.35em').attr('text-anchor', 'middle')
+            .attr('fill', _T.white).attr('font-size', '10px').attr('font-weight', '600')
+            .text(function (d) {
+                return d.name.length > 10 ? d.name.slice(0, 9) + '\u2026' : d.name;
+            });
+        spSel.append('text').attr('dy', '36px').attr('text-anchor', 'middle')
+            .attr('fill', _T.textSec).attr('font-size', '10px')
+            .text(function (d) {
+                return d.name.length > 12 ? d.name.slice(0, 11) + '\u2026' : d.name;
+            });
+    }
+
+    /* ── 호출자 노드 DOM 생성 — CC 등급 색상 [M1.AC 5.3] ── */
+    function _createSpCallerNodes(nodeSel) {
+        var cSel = nodeSel.filter(function (d) { return !d.isSp; });
+        cSel.append('circle').attr('r', 14)
+            .attr('fill', function (d) {
+                if (d.cc >= 15) return _T.danger;
+                if (d.cc >= 10) return _T.warning;
+                return _T.white;
+            })
+            .attr('stroke', function (d) {
+                return d.category === 'payment' ? _T.primary : _T.border;
+            })
+            .attr('stroke-width', function (d) { return d.category === 'payment' ? 2 : 1; });
+        cSel.append('text').attr('dy', '26px').attr('text-anchor', 'middle')
+            .attr('fill', _T.textSec).attr('font-size', '9px')
+            .text(function (d) {
+                var nm = d.name || d.id;
+                return nm.length > 12 ? nm.slice(0, 11) + '\u2026' : nm;
+            });
+    }
+
+    /* ── D3 방사형 그래프 — 오케스트레이터 ── */
+    function _renderRadialGraph(spName, callers) {
+        var svgEl = document.getElementById('sp-svg');
+        var W = svgEl.clientWidth || 800, H = svgEl.clientHeight || 400;
+        var CX = W / 2, CY = H / 2;
+        var r  = Math.min(W, H) * 0.32;
+
+        d3.select('#sp-svg').selectAll('g.main-g').remove();
+        if (_sim) { _sim.stop(); _sim = null; }
+        _zoom = d3.zoom().scaleExtent([0.2, 4])
+            .on('zoom', function (ev) { if (_g) _g.attr('transform', ev.transform); });
+        d3.select('#sp-svg').call(_zoom);
+        _g = d3.select('#sp-svg').append('g').attr('class', 'main-g');
+
+        var spNode      = { id: '__sp__', name: spName, fx: CX, fy: CY, isSp: true };
+        var callerNodes = _buildCallerNodes(callers, CX, CY, r);
+        var allNodes    = [spNode].concat(callerNodes);
+        var linkData    = callerNodes.map(function (n) { return { source: n, target: spNode }; });
+
+        var linkSel = _g.selectAll('.sp-link').data(linkData).enter().append('line')
+            .attr('class', 'sp-link').attr('stroke', _T.border)
+            .attr('marker-end', 'url(#sp-arrow)');
+        var nodeSel = _g.selectAll('.sp-node').data(allNodes).enter().append('g')
+            .attr('class', 'sp-node');
+        _createSpCenterNode(nodeSel);
+        _createSpCallerNodes(nodeSel);
+
+        _sim = d3.forceSimulation(allNodes)
+            .force('link', d3.forceLink(linkData).distance(r).strength(0.2))
+            .force('charge', d3.forceManyBody().strength(-80))
+            .force('collision', d3.forceCollide(28))
+            .on('tick', function () {
+                linkSel.attr('x1', function (d) { return d.source.x || 0; })
+                       .attr('y1', function (d) { return d.source.y || 0; })
+                       .attr('x2', function (d) { return d.target.x || 0; })
+                       .attr('y2', function (d) { return d.target.y || 0; });
+                nodeSel.attr('transform', function (d) {
+                    return 'translate(' + (d.x || 0) + ',' + (d.y || 0) + ')';
+                });
+            });
+    }
+
+    /* ── 호출 테이블 렌더링 ── */
+    function _renderCallerTable(callers, limit) {
+        var tbody = document.getElementById('sp-caller-tbody');
+        tbody.innerHTML = '';
+        var shown = callers.slice(0, limit);
+        shown.forEach(function (c, i) {
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td>' + (i + 1) + '</td>' +
+                '<td><a class="method-link" href="/flow-graph?start=' +
+                    encodeURIComponent(c.method_name) + '">' +
+                    _esc(c.method_name) + '</a></td>' +
+                '<td>' + _esc(c.class_name  || '—') + '</td>' +
+                '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+                    _esc((c.file_path || '—').split(/[/\\]/).pop()) + '</td>' +
+                '<td>' + _esc(c.project || '—') + '</td>' +
+                '<td>' + (c.line_no  || '—') + '</td>';
+            tbody.appendChild(tr);
+        });
+        document.getElementById('sp-table-count').textContent =
+            '총 ' + callers.length + '건';
+        /* 더 보기 버튼 */
+        var btnMore = document.getElementById('sp-btn-more');
+        btnMore.classList.toggle('visible', callers.length > limit);
+    }
+
+    /* ── HTML 이스케이프 (XSS 방어) ── */
+    function _escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    /* 내부 단축 별칭 */
+    function _esc(str) { return _escapeHtml(str); }
+
+    /* ── 4-State 전환 ── */
+    function _switchState(state) {
+        document.getElementById('sp-container').dataset.state = state;
+    }
+
+    /* ────────────────────────────────────────────
+       window.* 공개 함수 (onclick 핸들러용)
+    ──────────────────────────────────────────── */
+    window.spFilterInput = function () {
+        _renderSpList();
+    };
+
+    window.spShowMore = function () {
+        _shownRows += 20;
+        _renderCallerTable(_allCallers, _shownRows);
+    };
+
+    window.spExportExcel = function () {
+        window.location.href = '/api/export/excel';
+    };
+
+    window.spExportSVG = function () {
+        var svgEl = document.getElementById('sp-svg');
+        var xml   = new XMLSerializer().serializeToString(svgEl);
+        var blob  = new Blob(
+            ['<?xml version="1.0" encoding="utf-8"?>\n' + xml],
+            { type: 'image/svg+xml' }
+        );
+        var url = URL.createObjectURL(blob);
+        var a   = document.createElement('a');
+        a.href = url; a.download = 'sp-flow.svg'; a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    /* ── 진입점 ── */
+    document.addEventListener('DOMContentLoaded', _init);
+
+}());
+</script>
+{% endblock %}

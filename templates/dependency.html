@@ -1,0 +1,826 @@
+{% extends 'base.html' %}
+{% from 'macros/ui_components.html' import empty_state %}
+
+{% block title %}의존성 흐름도 — payletterCodeLab{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ================================================================
+   dependency.html 전용 스타일
+   [GR-4.2] 색상/간격은 var(--token) 전용 — 하드코딩 hex 금지
+   [PR-8] CDN URL 없음 — 로컬 번들 전용
+   ================================================================ */
+
+#dep-container { position: relative; }
+
+/* ── 툴바 ── */
+.graph-toolbar {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    flex-wrap: wrap;
+}
+.toolbar-label { font-size: var(--font-size-caption); color: var(--color-text-secondary); margin-right: var(--spacing-xs); }
+.btn-toolbar {
+    padding: 6px 12px; border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-secondary); cursor: pointer;
+    font-size: 13px; transition: background 0.15s ease, color 0.15s ease;
+}
+.btn-toolbar:hover  { background: var(--color-surface); }
+.btn-toolbar.active {
+    background: var(--color-primary-light); color: var(--color-primary);
+    border-color: var(--color-primary); font-weight: 600;
+}
+
+/* ── 순환 의존성 경고 배너 ── */
+[data-region="circular-warning-banner"] {
+    display: none; align-items: center; gap: var(--spacing-sm);
+    background: var(--color-danger-light); border: 1px solid var(--color-danger);
+    border-radius: var(--rounded-md); padding: var(--spacing-sm) var(--spacing-md);
+    margin-bottom: var(--spacing-md); font-size: 13px; color: var(--color-danger);
+}
+[data-region="circular-warning-banner"].visible { display: flex; }
+
+/* ── 메인 레이아웃 ── */
+.dep-main { display: flex; gap: var(--spacing-md); align-items: flex-start; }
+
+/* ── 그래프 카드 ── */
+.graph-card {
+    flex: 1; min-width: 0; background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card); overflow: hidden;
+}
+.graph-card-inner { position: relative; }
+
+/* ── SVG 캔버스 ── */
+#dep-svg {
+    display: block; width: 100%; height: 580px;
+    background: var(--color-surface); cursor: move;
+}
+#dep-svg:active { cursor: move; }
+
+/* ── 줌 컨트롤 ── */
+[data-region="zoom-controls"] {
+    position: absolute; bottom: var(--spacing-md); right: var(--spacing-md);
+    display: flex; flex-direction: column; gap: var(--spacing-xs); z-index: 3;
+}
+.btn-zoom {
+    width: 32px; height: 32px; border: 1px solid var(--color-border);
+    background: var(--color-bg); border-radius: var(--rounded-sm); cursor: pointer;
+    font-size: 16px; display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow-card); color: var(--color-text-primary);
+    transition: background 0.15s ease;
+}
+.btn-zoom:hover { background: var(--color-surface); }
+.btn-zoom-fit   { font-size: 13px; }
+
+/* ── 범례 ── */
+[data-region="legend"] {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+    display: flex; align-items: center; gap: var(--spacing-md); flex-wrap: wrap;
+    font-size: var(--font-size-caption); color: var(--color-text-secondary);
+}
+.legend-item { display: flex; align-items: center; gap: var(--spacing-xs); }
+.legend-dot  { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.legend-line-normal { width: 24px; height: 2px; background: var(--color-border); flex-shrink: 0; }
+.legend-line-cycle  { width: 24px; height: 0; border-top: 2px dashed var(--color-danger); flex-shrink: 0; }
+
+/* ── SVG 내보내기 ── */
+[data-region="svg-export-action"] {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+    display: flex; justify-content: flex-end;
+}
+.btn-export {
+    padding: 7px var(--spacing-md); border: 1px solid var(--color-primary);
+    border-radius: var(--rounded-sm); background: var(--color-bg);
+    color: var(--color-primary); cursor: pointer; font-size: 13px; font-weight: 500;
+    transition: background 0.15s ease;
+}
+.btn-export:hover { background: var(--color-primary-light); }
+
+/* ── 디테일 패널 ── */
+[data-region="detail-panel"] {
+    width: 232px; min-width: 232px; background: var(--color-bg);
+    border: 1px solid var(--color-border); border-radius: var(--border-radius-card);
+    box-shadow: var(--shadow-card); padding: var(--spacing-md); display: none;
+}
+[data-region="detail-panel"].visible { display: block; }
+.detail-title {
+    font-size: var(--font-size-h3); font-weight: 600; color: var(--color-text-primary);
+    margin-bottom: var(--spacing-md); word-break: break-all;
+}
+.detail-row { display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: var(--spacing-sm); font-size: 13px; }
+.detail-key  { color: var(--color-text-secondary); }
+.detail-val  { font-weight: 600; color: var(--color-text-primary); }
+.detail-badge-cycle {
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: var(--rounded-full);
+    background: var(--color-danger-light); color: var(--color-danger);
+}
+.btn-clear-focus {
+    margin-top: var(--spacing-sm); width: 100%; padding: 7px;
+    border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-secondary);
+    cursor: pointer; font-size: 13px; transition: background 0.15s ease;
+}
+.btn-clear-focus:hover { background: var(--color-surface); }
+
+/* ── 로딩 스켈레톤 ── */
+[data-region="loading-skeleton-canvas"] {
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    gap: var(--spacing-md); height: 480px;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    margin-bottom: var(--spacing-lg);
+}
+.skeleton-spinner {
+    width: 40px; height: 40px; border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary); border-radius: 50%;
+    animation: dep-spin 0.8s linear infinite;
+}
+@keyframes dep-spin { to { transform: rotate(360deg); } }
+.skeleton-label { color: var(--color-text-secondary); font-size: var(--font-size-body); }
+
+/* ── 에러 폴백 테이블 ── */
+[data-region="error-fallback-table"] {
+    display: none; background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    overflow: hidden; margin-bottom: var(--spacing-lg);
+}
+.fallback-header {
+    padding: var(--spacing-md); border-bottom: 1px solid var(--color-border);
+    display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;
+}
+.fallback-title { font-size: var(--font-size-h3); font-weight: 600; color: var(--color-text-primary); }
+.fallback-warn  { font-size: var(--font-size-caption); color: var(--color-danger); }
+.fallback-table-wrap { overflow-x: auto; max-height: 480px; overflow-y: auto; }
+.dep-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dep-table th {
+    text-align: left; padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--color-surface); color: var(--color-text-secondary);
+    font-weight: 600; border-bottom: 1px solid var(--color-border); white-space: nowrap;
+    position: sticky; top: 0; z-index: 1;
+}
+.dep-table td { padding: var(--spacing-xs) var(--spacing-sm); border-bottom: 1px solid var(--color-border); color: var(--color-text-primary); }
+.dep-table tr:last-child td { border-bottom: none; }
+.dep-table tr:hover td { background: var(--color-surface); }
+.cycle-row td { background: var(--color-danger-light) !important; }
+.cycle-row td:first-child { border-left: 3px solid var(--color-danger); }
+
+/* ── 빈 상태 ── */
+[data-region="empty-state"] { display: none; }
+
+/* ── 4-State CSS 토글 ── */
+#dep-container[data-state="loading"] [data-region="loading-skeleton-canvas"] { display: flex; }
+#dep-container[data-state="loading"] .dep-body                                { display: none; }
+#dep-container[data-state="error"]   [data-region="error-fallback-table"]     { display: block; }
+#dep-container[data-state="error"]   .dep-body                                { display: none; }
+#dep-container[data-state="empty"]   [data-region="empty-state"]              { display: flex; }
+#dep-container[data-state="empty"]   .dep-body                                { display: none; }
+
+/* ── D3 그래프 노드/엣지 스타일 ── */
+.dep-link         { stroke-width: 1.5; fill: none; opacity: 0.65; transition: opacity 0.2s; }
+.dep-link.cycle   { stroke-dasharray: 5 3; opacity: 0.9; }
+.dep-link.dimmed  { opacity: 0.07; }
+.dep-node circle  { cursor: pointer; stroke-width: 2; transition: opacity 0.2s; }
+.dep-node text    { pointer-events: none; }
+.dep-node.dimmed circle { opacity: 0.12; }
+.dep-node.dimmed text   { opacity: 0.12; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header" style="margin-bottom:var(--spacing-xl)">
+    <h1 style="font-size:var(--font-size-h1);font-weight:700;color:var(--color-text-primary)">의존성 흐름도</h1>
+    <p style="font-size:var(--font-size-body);color:var(--color-text-secondary);margin-top:var(--spacing-xs)">프로젝트 간 참조 관계 및 순환 의존성을 시각화합니다.</p>
+</div>
+
+<div id="dep-container" data-state="loading">
+
+    {# ── [loading] 스켈레톤 캔버스 ── #}
+    <div data-region="loading-skeleton-canvas" aria-busy="true" aria-label="그래프 계산 중">
+        <div class="skeleton-spinner" aria-hidden="true"></div>
+        <span class="skeleton-label">그래프 계산 중...</span>
+    </div>
+
+    {# ── [error] 폴백 테이블 ── #}
+    <div data-region="error-fallback-table" role="alert" aria-label="의존성 목록 테이블">
+        <div class="fallback-header">
+            <span class="fallback-title">의존성 목록</span>
+            <span class="fallback-warn" id="fallback-warn-msg">그래프 렌더링 실패 — 테이블 폴백</span>
+        </div>
+        <div class="fallback-table-wrap">
+            <table class="dep-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>소스 (참조하는 쪽)</th>
+                        <th>대상 (참조받는 쪽)</th>
+                        <th>유형</th>
+                        <th>순환 여부</th>
+                    </tr>
+                </thead>
+                <tbody id="fallback-table-body">
+                    <tr><td colspan="5" style="text-align:center;color:var(--color-text-secondary)">데이터 없음</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {# ── [empty] 빈 상태 ── #}
+    <div data-region="empty-state">
+        {{ empty_state('의존성 관계가 탐지되지 않았습니다. 분석을 먼저 실행하세요.', '소스 연결 설정으로 이동', '/setup') }}
+    </div>
+
+    {# ── [idle] 그래프 본문 ── #}
+    <div class="dep-body">
+
+        {# graph-toolbar #}
+        <div data-region="graph-toolbar" class="graph-toolbar">
+            <span class="toolbar-label">레이아웃:</span>
+            <button class="btn-toolbar active" id="btn-layout-force"
+                    onclick="setDepLayout('force')" aria-pressed="true">Force</button>
+            <button class="btn-toolbar" id="btn-layout-circle"
+                    onclick="setDepLayout('circle')" aria-pressed="false">Circle</button>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:var(--spacing-sm)">
+                <label style="display:flex;align-items:center;gap:var(--spacing-xs);font-size:var(--font-size-caption);color:var(--color-text-secondary);cursor:pointer">
+                    <input type="checkbox" id="chk-cycles-only" onchange="filterDepCycles(this.checked)"
+                           style="accent-color:var(--color-danger)" aria-label="순환 의존성만 표시">
+                    순환만 표시
+                </label>
+            </div>
+        </div>
+
+        {# circular-warning-banner #}
+        <div data-region="circular-warning-banner" id="cycle-warning" role="alert" aria-live="polite">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2" aria-hidden="true" style="flex-shrink:0">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                      d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71
+                         c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898
+                         0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/>
+            </svg>
+            <span>순환 의존성 감지: <strong id="cycle-count-text">0개 노드</strong> 영향</span>
+        </div>
+
+        {# 메인 레이아웃 #}
+        <div class="dep-main">
+
+            {# 그래프 카드 #}
+            <div class="graph-card">
+                <div class="graph-card-inner">
+
+                    {# graph-canvas #}
+                    <svg id="dep-svg" data-region="graph-canvas"
+                         aria-label="의존성 흐름도 SVG 캔버스" role="img">
+                        <defs id="dep-defs"></defs>
+                        <g id="dep-g"></g>
+                    </svg>
+
+                    {# zoom-controls #}
+                    <div data-region="zoom-controls" aria-label="줌 컨트롤">
+                        <button class="btn-zoom" onclick="depZoomIn()"  title="확대"       aria-label="확대">+</button>
+                        <button class="btn-zoom" onclick="depZoomOut()" title="축소"       aria-label="축소">−</button>
+                        <button class="btn-zoom btn-zoom-fit" onclick="depZoomFit()"
+                                title="전체 맞춤" aria-label="전체 맞춤">⊡</button>
+                    </div>
+                </div>
+
+                {# legend #}
+                <div data-region="legend" aria-label="그래프 범례">
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background:var(--color-primary)"></div>
+                        <span>일반 노드</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background:var(--color-danger)"></div>
+                        <span>순환 노드</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line-normal"></div>
+                        <span>일반 참조</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line-cycle"></div>
+                        <span>순환 참조</span>
+                    </div>
+                </div>
+
+                {# svg-export-action #}
+                <div data-region="svg-export-action">
+                    <button class="btn-export" onclick="depExportSVG()" aria-label="SVG 파일로 내보내기">
+                        SVG 내보내기
+                    </button>
+                </div>
+            </div>{# /.graph-card #}
+
+            {# detail-panel #}
+            <div data-region="detail-panel" id="detail-panel" aria-label="노드 상세 정보">
+                <div class="detail-title" id="detail-node-name">—</div>
+                <div class="detail-row">
+                    <span class="detail-key">의존 수 (출력)</span>
+                    <span class="detail-val" id="detail-out-deg">0</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-key">피의존 수 (입력)</span>
+                    <span class="detail-val" id="detail-in-deg">0</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-key">의존성 깊이</span>
+                    <span class="detail-val" id="detail-depth">—</span>
+                </div>
+                <div class="detail-row" id="detail-cycle-row" style="display:none">
+                    <span class="detail-key">순환</span>
+                    <span class="detail-badge-cycle">순환 의존성</span>
+                </div>
+                <button class="btn-clear-focus" onclick="depClearFocus()">포커스 해제</button>
+            </div>
+
+        </div>{# /.dep-main #}
+    </div>{# /.dep-body #}
+
+</div>{# /#dep-container #}
+{% endblock %}
+
+{% block extra_scripts %}
+{# [PR-8] CDN 완전 금지 — 로컬 번들만 사용 (폐쇄망 환경) #}
+<script src="{{ url_for('static', filename='js/d3.v7.min.js') }}"></script>
+<script>
+/**
+ * dependency.html JS
+ * [GR-4.2] D3 SVG fill → _T 색상 상수 (CSS var() D3 미지원)
+ * [GR-2.2] 함수 ≤ 50줄
+ * [security-standards.md §9.1] _escapeHtml() XSS 방어
+ */
+(function () {
+    'use strict';
+
+    /* ── D3 SVG용 색상 상수 (base.html :root와 동기화) ── */
+    var _T = {
+        primary: '#12ccc1', danger: '#ef4444',
+        warning: '#f59e0b', border: '#e2e8f0', textSec: '#64748b'
+    };
+
+    /* ── 모듈 상태 변수 ── */
+    var _svg, _g, _zoom, _sim;
+    var _allNodes = [], _allEdges = [];
+    var _cycleNodeIds = new Set(), _cycleEdgeKeys = new Set();
+    var _focusNodeId  = null;
+    var _currentLayout = 'force';
+    var _linkSel = null, _nodeSel = null, _inDegMap = {};
+
+    /* ────────────────────────────────────────
+       XSS 방어 [security-standards.md §9.1]
+    ──────────────────────────────────────── */
+    function _escapeHtml(s) {
+        return String(s || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    /* ────────────────────────────────────────
+       데이터 로드: GET /api/analyze/results
+    ──────────────────────────────────────── */
+    function _loadData() {
+        switchState('#dep-container', 'loading');
+        fetch('/api/analyze/results')
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (json) {
+                var merged = _mergeGraphData(json.results || {});
+                if (!merged.nodes.length) { switchState('#dep-container', 'empty'); return; }
+                _allNodes = merged.nodes;
+                _allEdges = merged.edges;
+                var cr = _detectCycles(merged.nodes, merged.edges);
+                _cycleNodeIds  = cr.nodeIds;
+                _cycleEdgeKeys = cr.edgeKeys;
+                _updateCycleBanner(_cycleNodeIds.size);
+                _renderD3(_allNodes, _allEdges);
+            })
+            .catch(function (err) {
+                console.error('[dep] 데이터 로드 실패:', err);
+                _renderFallbackTable([], [], '데이터 로드 실패: ' + err.message);
+                switchState('#dep-container', 'error');
+            });
+    }
+
+    /* ────────────────────────────────────────
+       프로젝트별 dependency_graph 병합
+    ──────────────────────────────────────── */
+    function _mergeGraphData(results) {
+        var nodeMap = {}, edgeSet = {}, edgeList = [];
+        Object.keys(results).forEach(function (proj) {
+            var dg = (results[proj] || {}).dependency_graph || {};
+            (dg.nodes || []).forEach(function (n) {
+                if (!nodeMap[n.id]) {
+                    nodeMap[n.id] = { id: n.id, name: n.name || n.id, depth: n.depth || 0 };
+                }
+            });
+            (dg.edges || []).forEach(function (e) {
+                var key = e.source + '\u2192' + e.target;
+                if (!edgeSet[key]) {
+                    edgeSet[key] = true;
+                    edgeList.push({ source: e.source, target: e.target, type: e.type || 'reference' });
+                }
+            });
+        });
+        return { nodes: Object.values(nodeMap), edges: edgeList };
+    }
+
+    /* ────────────────────────────────────────
+       DFS 순환 의존성 감지
+       Python detect_circular_dependencies()와 동일 알고리즘
+    ──────────────────────────────────────── */
+    function _detectCycles(nodes, edges) {
+        var adj = {};
+        nodes.forEach(function (n) { adj[n.id] = []; });
+        edges.forEach(function (e) { if (adj[e.source]) adj[e.source].push(e.target); });
+        var visited = {}, cycleNodeIds = new Set(), cycleEdgeKeys = new Set();
+        nodes.forEach(function (n) { visited[n.id] = 'white'; });
+        nodes.forEach(function (n) {
+            if (visited[n.id] === 'white') {
+                _dfsVisit(n.id, adj, visited, [], cycleNodeIds, cycleEdgeKeys);
+            }
+        });
+        return { nodeIds: cycleNodeIds, edgeKeys: cycleEdgeKeys };
+    }
+
+    function _dfsVisit(nodeId, adj, visited, stack, cycleNodeIds, cycleEdgeKeys) {
+        visited[nodeId] = 'gray';
+        stack.push(nodeId);
+        (adj[nodeId] || []).forEach(function (nbr) {
+            if (visited[nbr] === 'gray') {
+                var start = stack.indexOf(nbr);
+                var cycle = stack.slice(start);
+                cycle.forEach(function (id) { cycleNodeIds.add(id); });
+                cycleNodeIds.add(nbr);
+                for (var i = 0; i < cycle.length; i++) {
+                    cycleEdgeKeys.add(cycle[i] + '\u2192' + cycle[(i + 1) % cycle.length]);
+                }
+            } else if (visited[nbr] === 'white') {
+                _dfsVisit(nbr, adj, visited, stack, cycleNodeIds, cycleEdgeKeys);
+            }
+        });
+        stack.pop();
+        visited[nodeId] = 'black';
+    }
+
+    /* ────────────────────────────────────────
+       순환 경고 배너 갱신
+    ──────────────────────────────────────── */
+    function _updateCycleBanner(count) {
+        var banner = document.getElementById('cycle-warning');
+        document.getElementById('cycle-count-text').textContent = count + '개 노드';
+        if (count > 0) { banner.classList.add('visible'); }
+        else           { banner.classList.remove('visible'); }
+    }
+
+    /* ────────────────────────────────────────
+       SVG + 줌 초기화
+    ──────────────────────────────────────── */
+    function _setupSvg() {
+        _svg  = d3.select('#dep-svg');
+        _g    = d3.select('#dep-g');
+        _zoom = d3.zoom()
+            .scaleExtent([0.05, 6])
+            .on('zoom', function (event) { _g.attr('transform', event.transform); });
+        _svg.call(_zoom);
+        _setupArrowMarkers();
+    }
+
+    function _setupArrowMarkers() {
+        var defs = d3.select('#dep-defs');
+        defs.selectAll('*').remove();
+        /* 일반 참조 화살표 */
+        defs.append('marker')
+            .attr('id', 'arr-normal').attr('viewBox', '0 -5 10 10')
+            .attr('refX', 22).attr('refY', 0)
+            .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+            .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', _T.border);
+        /* 순환 참조 화살표 (danger 색상) */
+        defs.append('marker')
+            .attr('id', 'arr-cycle').attr('viewBox', '0 -5 10 10')
+            .attr('refX', 22).attr('refY', 0)
+            .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+            .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', _T.danger);
+    }
+
+    /* ────────────────────────────────────────
+       D3 렌더링 진입점 — 실패 시 테이블 폴백
+    ──────────────────────────────────────── */
+    function _renderD3(nodes, edges) {
+        try {
+            if (typeof d3 === 'undefined') throw new Error('D3 미로드');
+            _setupSvg();
+            _g.selectAll('*').remove();
+            var nodesCopy = nodes.map(function (n) { return Object.assign({}, n); });
+            var edgesCopy = edges.map(function (e) {
+                return { source: e.source, target: e.target, type: e.type };
+            });
+            _inDegMap = _calcInDegrees(nodesCopy, edgesCopy);
+            if (_currentLayout === 'circle') {
+                _applyCircleLayout(nodesCopy);
+                _linkSel = _createLinks(edgesCopy);
+                _nodeSel = _createNodes(nodesCopy);
+                _linkSel.attr('d', function (d) { return _pathArc(d); });
+                _nodeSel.attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; });
+            } else {
+                _renderForce(nodesCopy, edgesCopy);
+            }
+            switchState('#dep-container', 'idle');
+        } catch (e) {
+            console.error('[dep] D3 렌더 실패 → 테이블 폴백:', e);
+            _renderFallbackTable(nodes, edges, 'D3 그래프 렌더링 실패 — 테이블로 표시');
+            switchState('#dep-container', 'error');
+        }
+    }
+
+    /* ────────────────────────────────────────
+       Force-Directed 시뮬레이션 렌더링
+    ──────────────────────────────────────── */
+    function _renderForce(nodes, edges) {
+        var svgEl = document.getElementById('dep-svg');
+        var W = svgEl.clientWidth || 900, H = svgEl.clientHeight || 580;
+        _linkSel = _createLinks(edges);
+        _nodeSel = _createNodes(nodes);
+        _sim = d3.forceSimulation(nodes)
+            .force('link',      d3.forceLink(edges).id(function (d) { return d.id; }).distance(130))
+            .force('charge',    d3.forceManyBody().strength(-320))
+            .force('center',    d3.forceCenter(W / 2, H / 2))
+            .force('collision', d3.forceCollide(42))
+            .on('tick', function () {
+                _linkSel.attr('d', function (d) { return _pathArc(d); });
+                _nodeSel.attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; });
+            });
+    }
+
+    /* ────────────────────────────────────────
+       원형 레이아웃 좌표 계산
+    ──────────────────────────────────────── */
+    function _applyCircleLayout(nodes) {
+        var svgEl = document.getElementById('dep-svg');
+        var W = svgEl.clientWidth || 900, H = svgEl.clientHeight || 580;
+        var r = Math.min(W, H) * 0.38, cx = W / 2, cy = H / 2;
+        nodes.forEach(function (n, i) {
+            var angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+            n.x = cx + r * Math.cos(angle);
+            n.y = cy + r * Math.sin(angle);
+        });
+    }
+
+    /* ────────────────────────────────────────
+       D3 선택 생성 헬퍼
+    ──────────────────────────────────────── */
+    function _calcInDegrees(nodes, edges) {
+        var map = {};
+        nodes.forEach(function (n) { map[n.id] = 0; });
+        edges.forEach(function (e) {
+            var t = typeof e.target === 'object' ? e.target.id : e.target;
+            if (map[t] !== undefined) map[t]++;
+        });
+        return map;
+    }
+
+    function _edgeKey(e) {
+        var s = typeof e.source === 'object' ? e.source.id : e.source;
+        var t = typeof e.target === 'object' ? e.target.id : e.target;
+        return s + '\u2192' + t;
+    }
+
+    function _isCycleEdge(e) { return _cycleEdgeKeys.has(_edgeKey(e)); }
+
+    function _createLinks(edges) {
+        return _g.append('g').attr('class', 'links')
+            .selectAll('path')
+            .data(edges).enter().append('path')
+            .attr('class', function (e) { return 'dep-link' + (_isCycleEdge(e) ? ' cycle' : ''); })
+            .attr('stroke', function (e) { return _isCycleEdge(e) ? _T.danger : _T.border; })
+            .attr('marker-end', function (e) {
+                return _isCycleEdge(e) ? 'url(#arr-cycle)' : 'url(#arr-normal)';
+            });
+    }
+
+    function _createNodes(nodes) {
+        var grp = _g.append('g').attr('class', 'nodes')
+            .selectAll('g').data(nodes).enter().append('g').attr('class', 'dep-node')
+            .call(d3.drag()
+                .on('start', function (ev, d) {
+                    if (!ev.active && _sim) _sim.alphaTarget(0.3).restart();
+                    d.fx = d.x; d.fy = d.y;
+                })
+                .on('drag',  function (ev, d) { d.fx = ev.x; d.fy = ev.y; })
+                .on('end',   function (ev, d) {
+                    if (!ev.active && _sim) _sim.alphaTarget(0);
+                    d.fx = null; d.fy = null;
+                }))
+            .on('click', function (ev, d) { ev.stopPropagation(); _onNodeClick(d); });
+        grp.append('circle')
+            .attr('r', function (d) { return Math.max(10, 8 + (_inDegMap[d.id] || 0) * 2); })
+            .attr('fill', function (d) { return _cycleNodeIds.has(d.id) ? _T.danger : _T.primary; })
+            .attr('stroke', function (d) {
+                /* 깊이 3+ 노드 → warning 색상 테두리 (깊은 의존성 경고 [M1.AC 4.5]) */
+                if (_cycleNodeIds.has(d.id)) return _T.danger;
+                if ((d.depth || 0) >= 3)    return _T.warning;
+                return _T.primary;
+            })
+            .attr('fill-opacity', 0.85);
+        /* 깊이 숫자 — 노드 중앙 [M1.AC 4.5] */
+        grp.append('text')
+            .attr('dy', '0.35em').attr('text-anchor', 'middle')
+            .attr('fill', '#ffffff').attr('font-size', '10px').attr('font-weight', '600')
+            .text(function (d) { return d.depth != null ? d.depth : ''; });
+        /* 노드명 레이블 */
+        grp.append('text')
+            .attr('dy', function (d) { return Math.max(10, 8 + (_inDegMap[d.id] || 0) * 2) + 14; })
+            .attr('text-anchor', 'middle')
+            .attr('fill', _T.textSec).attr('font-size', '11px')
+            .text(function (d) { return d.name.length > 18 ? d.name.slice(0, 16) + '\u2026' : d.name; });
+        return grp;
+    }
+
+    /* 호 경로 생성 — 엣지 겹침 방지 */
+    function _pathArc(d) {
+        var sx = typeof d.source === 'object' ? d.source.x : 0;
+        var sy = typeof d.source === 'object' ? d.source.y : 0;
+        var tx = typeof d.target === 'object' ? d.target.x : 0;
+        var ty = typeof d.target === 'object' ? d.target.y : 0;
+        var dx = tx - sx, dy = ty - sy;
+        var dr = Math.sqrt(dx * dx + dy * dy) * 0.55;
+        return 'M' + sx + ',' + sy + 'A' + dr + ',' + dr + ' 0 0,1 ' + tx + ',' + ty;
+    }
+
+    /* ────────────────────────────────────────
+       노드 클릭 → 포커스 모드 [M1.AC 4.4]
+    ──────────────────────────────────────── */
+    function _onNodeClick(d) {
+        if (_focusNodeId === d.id) { depClearFocus(); return; }
+        _focusNodeId = d.id;
+        var neighbors = new Set([d.id]);
+        (_linkSel ? _linkSel.data() : []).forEach(function (e) {
+            var s = typeof e.source === 'object' ? e.source.id : e.source;
+            var t = typeof e.target === 'object' ? e.target.id : e.target;
+            if (s === d.id) neighbors.add(t);
+            if (t === d.id) neighbors.add(s);
+        });
+        if (_nodeSel) {
+            _nodeSel.classed('dimmed', function (n) { return !neighbors.has(n.id); });
+        }
+        if (_linkSel) {
+            _linkSel.classed('dimmed', function (e) {
+                var s = typeof e.source === 'object' ? e.source.id : e.source;
+                var t = typeof e.target === 'object' ? e.target.id : e.target;
+                return !neighbors.has(s) || !neighbors.has(t);
+            });
+        }
+        _renderDetailPanel(d, neighbors.size - 1);
+    }
+
+    /* ────────────────────────────────────────
+       디테일 패널 렌더링
+    ──────────────────────────────────────── */
+    function _renderDetailPanel(d, neighborCount) {
+        var outDeg = 0;
+        (_linkSel ? _linkSel.data() : []).forEach(function (e) {
+            var s = typeof e.source === 'object' ? e.source.id : e.source;
+            if (s === d.id) outDeg++;
+        });
+        document.getElementById('detail-node-name').textContent = _escapeHtml(d.name);
+        document.getElementById('detail-out-deg').textContent   = outDeg;
+        document.getElementById('detail-in-deg').textContent    = _inDegMap[d.id] || 0;
+        document.getElementById('detail-depth').textContent     = d.depth != null ? d.depth : '—';
+        document.getElementById('detail-cycle-row').style.display = _cycleNodeIds.has(d.id) ? '' : 'none';
+        document.getElementById('detail-panel').classList.add('visible');
+    }
+
+    /* ────────────────────────────────────────
+       줌 컨트롤
+    ──────────────────────────────────────── */
+    function depZoomIn()  { if (_svg && _zoom) _svg.transition().duration(300).call(_zoom.scaleBy, 1.4); }
+    function depZoomOut() { if (_svg && _zoom) _svg.transition().duration(300).call(_zoom.scaleBy, 0.72); }
+    function depZoomFit() {
+        if (!_svg || !_zoom) return;
+        var svgEl = document.getElementById('dep-svg');
+        var W = svgEl.clientWidth || 900, H = svgEl.clientHeight || 580;
+        var bbox;
+        try { bbox = document.getElementById('dep-g').getBBox(); } catch (e) { return; }
+        if (!bbox.width || !bbox.height) return;
+        var scale = Math.min(0.88 * W / bbox.width, 0.88 * H / bbox.height, 4);
+        var tx = W / 2 - scale * (bbox.x + bbox.width  / 2);
+        var ty = H / 2 - scale * (bbox.y + bbox.height / 2);
+        _svg.transition().duration(400).call(_zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    }
+
+    /* ────────────────────────────────────────
+       레이아웃 전환
+    ──────────────────────────────────────── */
+    function setDepLayout(layout) {
+        if (_currentLayout === layout) return;
+        _currentLayout = layout;
+        ['force', 'circle'].forEach(function (l) {
+            var el = document.getElementById('btn-layout-' + l);
+            el.classList.toggle('active', l === layout);
+            el.setAttribute('aria-pressed', String(l === layout));
+        });
+        if (_sim) { _sim.stop(); _sim = null; }
+        depClearFocus();
+        _renderD3(_allNodes, _allEdges);
+    }
+
+    /* ────────────────────────────────────────
+       순환만 표시 필터
+    ──────────────────────────────────────── */
+    function filterDepCycles(onlyShow) {
+        var nodes = onlyShow
+            ? _allNodes.filter(function (n) { return _cycleNodeIds.has(n.id); })
+            : _allNodes;
+        var edges = onlyShow
+            ? _allEdges.filter(function (e) { return _cycleEdgeKeys.has(e.source + '\u2192' + e.target); })
+            : _allEdges;
+        if (_sim) { _sim.stop(); _sim = null; }
+        depClearFocus();
+        _renderD3(nodes, edges);
+    }
+
+    /* ────────────────────────────────────────
+       포커스 해제
+    ──────────────────────────────────────── */
+    function depClearFocus() {
+        _focusNodeId = null;
+        if (_nodeSel) _nodeSel.classed('dimmed', false);
+        if (_linkSel) _linkSel.classed('dimmed', false);
+        document.getElementById('detail-panel').classList.remove('visible');
+    }
+
+    /* ────────────────────────────────────────
+       SVG 내보내기
+       [security-standards.md §9.5] — Blob URL 즉시 해제
+    ──────────────────────────────────────── */
+    function depExportSVG() {
+        var svgEl = document.getElementById('dep-svg');
+        var clone = svgEl.cloneNode(true);
+        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        var str  = new XMLSerializer().serializeToString(clone);
+        var blob = new Blob([str], { type: 'image/svg+xml;charset=utf-8' });
+        var url  = URL.createObjectURL(blob);
+        var a    = document.createElement('a');
+        a.href = url; a.download = 'dependency-graph.svg';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    /* ────────────────────────────────────────
+       폴백 테이블 렌더링 (D3 실패 시)
+    ──────────────────────────────────────── */
+    function _renderFallbackTable(nodes, edges, warnMsg) {
+        if (warnMsg) {
+            var el = document.getElementById('fallback-warn-msg');
+            if (el) el.textContent = warnMsg;
+        }
+        var tbody = document.getElementById('fallback-table-body');
+        if (!edges.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;'
+                + 'color:var(--color-text-secondary)">의존성 데이터 없음</td></tr>';
+            return;
+        }
+        tbody.innerHTML = edges.map(function (e, i) {
+            var key = e.source + '\u2192' + e.target;
+            var isCy = _cycleEdgeKeys.has(key);
+            return '<tr' + (isCy ? ' class="cycle-row"' : '') + '>'
+                + '<td>' + (i + 1) + '</td>'
+                + '<td style="font-family:var(--font-family-code);font-size:12px">'
+                + _escapeHtml(e.source) + '</td>'
+                + '<td style="font-family:var(--font-family-code);font-size:12px">'
+                + _escapeHtml(e.target) + '</td>'
+                + '<td>' + _escapeHtml(e.type || 'reference') + '</td>'
+                + '<td>' + (isCy ? '<span style="color:var(--color-danger);font-weight:600">순환</span>' : '—') + '</td>'
+                + '</tr>';
+        }).join('');
+    }
+
+    /* ── 캔버스 빈 영역 클릭 → 포커스 해제 ── */
+    document.getElementById('dep-svg').addEventListener('click', function (e) {
+        if (e.target === this) depClearFocus();
+    });
+
+    /* ── 전역 노출 (HTML onclick 핸들러용) ── */
+    window.setDepLayout    = setDepLayout;
+    window.filterDepCycles = filterDepCycles;
+    window.depZoomIn       = depZoomIn;
+    window.depZoomOut      = depZoomOut;
+    window.depZoomFit      = depZoomFit;
+    window.depExportSVG    = depExportSVG;
+    window.depClearFocus   = depClearFocus;
+
+    /* ── 초기화 ── */
+    document.addEventListener('DOMContentLoaded', _loadData);
+
+}());
+</script>
+{% endblock %}

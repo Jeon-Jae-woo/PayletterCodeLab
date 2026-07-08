@@ -1,0 +1,127 @@
+{#
+  ui_components.html — 공통 4-State UI 매크로 모음
+  [GR-4.1] 4-State(Idle/Loading/Error/Empty) 전 컴포넌트 의무 구현
+  [GR-2.2] 각 매크로 ≤ 50줄 준수
+  [PR-8] CDN 참조 없음 — 모든 스타일은 base.html :root 토큰 사용
+#}
+
+{% macro loading_skeleton(rows=5) %}
+{# 로딩 상태 스켈레톤 카드 — 분석 진행 중 자리 표시자 #}
+<div class="skeleton-container" aria-busy="true" aria-label="데이터 불러오는 중">
+    <div class="skeleton-header"></div>
+    {% for _ in range(rows) %}
+    <div class="skeleton-row">
+        <div class="skeleton-cell skeleton-cell-lg"></div>
+        <div class="skeleton-cell skeleton-cell-md"></div>
+        <div class="skeleton-cell skeleton-cell-sm"></div>
+    </div>
+    {% endfor %}
+</div>
+<style>
+.skeleton-container { padding: var(--spacing-md); }
+.skeleton-header { height: 20px; background: var(--color-surface); border-radius: var(--rounded-md);
+    margin-bottom: var(--spacing-md); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+.skeleton-row { display: flex; gap: var(--spacing-sm); margin-bottom: var(--spacing-sm); }
+.skeleton-cell { height: 14px; background: var(--color-surface); border-radius: var(--rounded-sm);
+    animation: skeleton-pulse 1.4s ease-in-out infinite; }
+.skeleton-cell-lg { flex: 3; }
+.skeleton-cell-md { flex: 2; }
+.skeleton-cell-sm { flex: 1; }
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+</style>
+{% endmacro %}
+
+
+{% macro error_banner(message, retry_url='') %}
+{# 오류 상태 배너 — 빨간 배너 + Retry 버튼 #}
+<div class="error-banner" role="alert" aria-live="assertive">
+    <svg xmlns="http://www.w3.org/2000/svg" class="error-icon" fill="none"
+         viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71
+                 c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5
+                 -3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/>
+    </svg>
+    <span class="error-message">{{ message }}</span>
+    {% if retry_url %}
+    <a href="{{ retry_url }}" class="retry-btn">재시도</a>
+    {% endif %}
+</div>
+<style>
+.error-banner { display: flex; align-items: center; gap: var(--spacing-sm);
+    background: var(--color-danger-light); border: 1px solid var(--color-danger);
+    border-radius: var(--rounded-md); padding: var(--spacing-md); }
+.error-icon { width: 20px; height: 20px; color: var(--color-danger); flex-shrink: 0; }
+.error-message { flex: 1; color: var(--color-danger); font-size: var(--font-size-body); }
+.retry-btn { padding: 6px 12px; border-radius: var(--rounded-sm); background: var(--color-danger);
+    color: var(--color-bg); font-size: 13px; text-decoration: none; white-space: nowrap; }
+</style>
+{% endmacro %}
+
+
+{% macro empty_state(message, cta_text='', cta_url='') %}
+{# 빈 상태 — 일러스트 + 안내 메시지 + CTA ("분석을 먼저 실행하세요") #}
+<div class="empty-state" role="status">
+    <svg xmlns="http://www.w3.org/2000/svg" class="empty-icon" fill="none"
+         viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0
+                 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25
+                 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25
+                 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338
+                 a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588
+                 L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/>
+    </svg>
+    <p class="empty-message">{{ message }}</p>
+    {% if cta_text and cta_url %}
+    <a href="{{ cta_url }}" class="empty-cta">{{ cta_text }}</a>
+    {% endif %}
+</div>
+<style>
+.empty-state { display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: var(--spacing-2xl) var(--spacing-xl);
+    gap: var(--spacing-md); text-align: center; }
+.empty-icon { width: 48px; height: 48px; color: var(--color-text-muted); }
+.empty-message { color: var(--color-text-secondary); font-size: var(--font-size-body); }
+.empty-cta { padding: 8px 16px; background: var(--color-primary);
+    color: var(--color-bg); border-radius: var(--rounded-md);
+    text-decoration: none; font-size: 13px; font-weight: 500; }
+</style>
+{% endmacro %}
+
+
+{% macro progress_bar(project_name, status) %}
+{# 분석 진행률 바 — 클론 / 분석 / 완료 상태 뱃지 포함 #}
+<div class="progress-item">
+    <div class="progress-header">
+        <span class="progress-project">{{ project_name }}</span>
+        <span class="progress-badge progress-badge-{{ status }}">
+            {% if status == 'cloning' %}클론 중
+            {% elif status == 'analyzing' %}분석 중
+            {% elif status == 'done' %}완료
+            {% else %}{{ status }}{% endif %}
+        </span>
+    </div>
+    <div class="progress-track">
+        <div class="progress-fill progress-fill-{{ status }}"></div>
+    </div>
+</div>
+<style>
+.progress-item { padding: var(--spacing-sm) 0; }
+.progress-header { display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: var(--spacing-xs); }
+.progress-project { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+.progress-badge { font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: var(--rounded-full); }
+.progress-badge-cloning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.progress-badge-analyzing { background: var(--color-primary-light); color: var(--color-primary); }
+.progress-badge-done { background: var(--color-success-bg); color: var(--color-success-text); }
+.progress-track { height: 6px; background: var(--color-border);
+    border-radius: var(--rounded-full); overflow: hidden; }
+.progress-fill { height: 100%; background: var(--color-primary);
+    border-radius: var(--rounded-full); transition: width 0.3s ease; }
+.progress-fill-cloning { width: 30%; }
+.progress-fill-analyzing { width: 70%; }
+.progress-fill-done { width: 100%; background: var(--color-success); }
+</style>
+{% endmacro %}

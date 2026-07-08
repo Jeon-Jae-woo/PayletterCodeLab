@@ -1,0 +1,15 @@
+# PG 코드베이스 통합 분석기 — 의존성 패키지 목록
+# [PR-4] 명세 기준 버전 고정
+
+Flask>=3.0,<4.0
+Werkzeug>=3.0,<4.0
+lizard>=1.17,<2.0
+python-gitlab>=4.0,<5.0
+PyGithub>=2.0,<3.0
+openpyxl>=3.1,<4.0
+PyInstaller>=6.0,<7.0
+python-json-logger>=2.0,<3.0
+
+# 테스트
+pytest>=8.0,<9.0
+pytest-cov>=4.0,<8.0

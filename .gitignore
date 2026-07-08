@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+dist/
+build/
+*.spec
+
+# 임시 클론 데이터 (수십 MB)
+temp/
+
+# 커버리지
+coverage/
+coverage.json
+.coverage
+htmlcov/
+
+# 환경변수
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

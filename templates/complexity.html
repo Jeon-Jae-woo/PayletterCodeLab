@@ -1,0 +1,504 @@
+{% extends 'base.html' %}
+{% from 'macros/ui_components.html' import empty_state, loading_skeleton %}
+
+{% block title %}복잡도 상세 — payletterCodeLab{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ================================================================
+   complexity.html 전용 스타일
+   [GR-4.2] 색상/간격은 var(--token) 전용 — 하드코딩 hex 금지
+   [PR-8] CDN URL 없음 — 로컬 번들 전용
+   ================================================================ */
+
+#complexity-container { position: relative; }
+
+/* ── 탭 내비게이션 ── */
+.tab-nav { display: flex; gap: 0; border-bottom: 2px solid var(--color-border); margin-bottom: var(--spacing-lg); }
+.tab-btn {
+    padding: var(--spacing-sm) var(--spacing-md); background: none; border: none;
+    border-bottom: 2px solid transparent; margin-bottom: -2px;
+    font-size: var(--font-size-body); font-weight: 500; color: var(--color-text-secondary);
+    cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease;
+}
+.tab-btn:hover   { color: var(--color-text-primary); }
+.tab-btn.active  { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+
+/* ── 필터 행 ── */
+.filter-row { display: flex; align-items: center; gap: var(--spacing-sm); margin-bottom: var(--spacing-md); }
+.filter-row label { font-size: var(--font-size-caption); color: var(--color-text-secondary); }
+.filter-select {
+    padding: 6px var(--spacing-sm); border: 1px solid var(--color-border);
+    border-radius: var(--rounded-sm); background: var(--color-bg);
+    font-size: var(--font-size-caption); color: var(--color-text-primary); cursor: pointer;
+}
+.filter-info { font-size: var(--font-size-caption); color: var(--color-text-secondary); margin-left: auto; }
+
+/* ── 패널 카드 ── */
+.panel-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); box-shadow: var(--shadow-card);
+    overflow: hidden; margin-bottom: var(--spacing-lg);
+}
+.panel-card-inner { overflow-x: auto; }
+
+/* ── 테이블 ── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th {
+    text-align: left; padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--color-surface); color: var(--color-text-secondary);
+    font-weight: 600; border-bottom: 1px solid var(--color-border); white-space: nowrap;
+}
+.data-table td { padding: var(--spacing-xs) var(--spacing-sm); border-bottom: 1px solid var(--color-border); color: var(--color-text-primary); }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--color-surface); }
+.func-link { color: var(--color-primary); text-decoration: none; font-weight: 500; }
+.func-link:hover { text-decoration: underline; }
+
+/* CC 등급 배지 */
+.cc-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--rounded-full); white-space: nowrap; }
+.cc-badge-low      { background: var(--color-success-bg);  color: var(--color-success-text); }
+.cc-badge-medium   { background: var(--color-warning-bg);  color: var(--color-warning-text); }
+.cc-badge-high     { background: var(--color-danger-bg);   color: var(--color-danger); }
+.cc-badge-critical { background: var(--color-critical-bg); color: #fff; }
+
+/* 구분 배지 */
+.badge-payment  { font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: var(--rounded-full);
+                  background: var(--color-primary-light); color: var(--color-primary); margin-right: 4px; }
+.badge-security { font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: var(--rounded-full);
+                  background: var(--color-warning-bg); color: var(--color-warning-text); }
+
+/* ── 페이지네이션 ── */
+.pagination-row { display: flex; align-items: center; gap: var(--spacing-xs); padding: var(--spacing-sm) 0;
+                  flex-wrap: wrap; }
+.page-btn {
+    padding: 4px 10px; border: 1px solid var(--color-border); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-text-secondary); font-size: 13px; cursor: pointer;
+    transition: background 0.1s ease;
+}
+.page-btn:hover  { background: var(--color-surface); }
+.page-btn.active { background: var(--color-primary); color: var(--color-bg); border-color: var(--color-primary); font-weight: 600; }
+.page-info { font-size: var(--font-size-caption); color: var(--color-text-secondary); margin-left: auto; }
+
+/* ── God Class 카드 그리드 ── */
+.godclass-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-md); margin-bottom: var(--spacing-lg); }
+.godclass-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-md); box-shadow: var(--shadow-card);
+}
+.gc-name { font-size: var(--font-size-h3); font-weight: 600; color: var(--color-text-primary); margin-bottom: var(--spacing-xs); word-break: break-all; }
+.gc-meta { display: flex; gap: var(--spacing-md); margin-top: var(--spacing-sm); flex-wrap: wrap; }
+.gc-stat { font-size: var(--font-size-caption); color: var(--color-text-secondary); }
+.gc-stat strong { color: var(--color-text-primary); }
+
+/* ── 액션 행 ── */
+.action-row { display: flex; justify-content: flex-end; margin-bottom: var(--spacing-lg); }
+.btn-secondary {
+    padding: 9px var(--spacing-md); border: 1px solid var(--color-primary); border-radius: var(--rounded-sm);
+    background: var(--color-bg); color: var(--color-primary); cursor: pointer;
+    font-size: var(--font-size-body); font-weight: 500; transition: background 0.15s ease;
+}
+.btn-secondary:hover    { background: var(--color-primary-light); }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── 에러 / 빈 상태 ── */
+[data-region="error-banner"] { display: none; margin-bottom: var(--spacing-lg); }
+[data-region="empty-state"]  { display: none; }
+
+/* 인라인 에러 배너 — _showComplexityError 전용 */
+.inline-error-banner {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    background: var(--color-danger-light); border: 1px solid var(--color-danger);
+    border-radius: var(--rounded-md); padding: var(--spacing-md);
+}
+.inline-error-msg   { flex: 1; color: var(--color-danger); }
+.inline-error-retry {
+    padding: 6px 12px; background: var(--color-danger); color: var(--color-bg);
+    border: none; border-radius: var(--rounded-sm); cursor: pointer; font-size: 13px;
+}
+
+/* ── 로딩 오버레이 ── */
+[data-region="loading-skeleton-table"] {
+    display: none; position: absolute; inset: 0;
+    background: var(--color-bg); z-index: 5; padding: 0;
+    border-radius: var(--border-radius-card);
+}
+
+/* ── 4-State CSS 토글 ── */
+#complexity-container[data-state="loading"] [data-region="loading-skeleton-table"] { display: block; }
+#complexity-container[data-state="loading"] .complexity-body { visibility: hidden; }
+#complexity-container[data-state="error"]  [data-region="error-banner"]            { display: block; }
+#complexity-container[data-state="empty"]  [data-region="empty-state"]             { display: flex; }
+#complexity-container[data-state="empty"]  .complexity-body                        { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header" style="margin-bottom:var(--spacing-xl)">
+    <h1 id="page-title" style="font-size:var(--font-size-h1);font-weight:700;color:var(--color-text-primary)">복잡도 상세</h1>
+    <p style="font-size:var(--font-size-body);color:var(--color-text-secondary);margin-top:var(--spacing-xs)">C# 코드베이스 함수별 순환 복잡도(CC)를 분석합니다.</p>
+</div>
+
+<div id="complexity-container" data-state="loading">
+
+    {# ── [loading] 스켈레톤 테이블 ── #}
+    <div data-region="loading-skeleton-table" aria-busy="true" aria-label="데이터 불러오는 중">
+        {{ loading_skeleton(rows=8) }}
+    </div>
+
+    {# ── [error] 에러 배너 ── #}
+    <div data-region="error-banner" id="complexity-error-region" role="alert" aria-live="assertive"></div>
+
+    {# ── [empty] 빈 상태 ── #}
+    <div data-region="empty-state">
+        {{ empty_state('분석 결과가 없습니다. 소스를 연결하고 분석을 먼저 실행하세요.', '소스 연결 설정으로 이동', '/setup') }}
+    </div>
+
+    {# ── [idle] 본문 ── #}
+    <div class="complexity-body">
+
+        {# export-action #}
+        <div data-region="export-action" class="action-row">
+            <button class="btn-secondary" id="export-btn" onclick="exportExcel()">Excel 내보내기</button>
+        </div>
+
+        {# content-tabs #}
+        <div data-region="content-tabs" class="tab-nav" role="tablist">
+            <button role="tab" aria-selected="true"  data-tab="risk"     class="tab-btn active"  onclick="switchTab('risk')">위험 함수</button>
+            <button role="tab" aria-selected="false" data-tab="godclass" class="tab-btn"          onclick="switchTab('godclass')">God Class</button>
+            <button role="tab" aria-selected="false" data-tab="security" class="tab-btn"          onclick="switchTab('security')">보안 민감 코드</button>
+        </div>
+
+        {# ── 위험 함수 탭 ── #}
+        <div id="tab-risk" role="tabpanel">
+            <div class="filter-row">
+                <label for="filter-project">프로젝트</label>
+                <select id="filter-project" class="filter-select" onchange="filterByProject(this.value)">
+                    <option value="">전체</option>
+                </select>
+                <span id="filter-info" class="filter-info"></span>
+            </div>
+            <div data-region="complexity-table" class="panel-card">
+                <div class="panel-card-inner">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width:36px">#</th>
+                                <th>함수명</th>
+                                <th>클래스</th>
+                                <th>파일</th>
+                                <th>프로젝트</th>
+                                <th style="width:52px">CC</th>
+                                <th style="width:72px">등급</th>
+                                <th style="width:52px">라인</th>
+                                <th style="width:80px">구분</th>
+                            </tr>
+                        </thead>
+                        <tbody id="risk-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div data-region="pagination-bar" id="pagination-bar" class="pagination-row"></div>
+        </div>
+
+        {# ── God Class 탭 ── #}
+        <div id="tab-godclass" role="tabpanel" style="display:none">
+            <div data-region="godclass-card-grid" id="godclass-grid" class="godclass-grid"></div>
+        </div>
+
+        {# ── 보안 민감 코드 탭 ── #}
+        <div id="tab-security" role="tabpanel" style="display:none">
+            <div class="panel-card">
+                <div class="panel-card-inner">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>함수명</th>
+                                <th>클래스</th>
+                                <th>파일</th>
+                                <th>프로젝트</th>
+                                <th style="width:52px">CC</th>
+                                <th style="width:72px">등급</th>
+                            </tr>
+                        </thead>
+                        <tbody id="security-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>{# /.complexity-body #}
+
+</div>{# /#complexity-container #}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/** XSS 방지 HTML 이스케이프 [security-standards.md §9.1] */
+function _escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** CC 등급 → 배지 CSS 클래스 */
+function _ccBadgeClass(grade) {
+    var map = { '낮음': 'cc-badge-low', '중간': 'cc-badge-medium', '높음': 'cc-badge-high', '매우높음': 'cc-badge-critical' };
+    return map[grade] || 'cc-badge-low';
+}
+
+/** 결제/보안 키워드 — base.html 토큰 변수와 연동된 구분 배지용 */
+var _PAY_KW = ['payment', 'pay', 'charge', 'billing', 'refund', 'transaction', 'settle'];
+var _SEC_KW = ['encrypt', 'hash', 'token', 'auth', 'secret', 'key', 'password', 'crypt'];
+
+/** 함수 구분 배지 HTML 생성 ([M1.AC 2.3], [M1.AC 2.4]) */
+function _getBadges(f) {
+    var combined = ((f.function_name||'') + ' ' + (f.file_path||'')).toLowerCase();
+    var html = '';
+    if (_PAY_KW.some(function(kw){ return combined.indexOf(kw) !== -1; })) {
+        html += '<span class="badge-payment">결제</span>';
+    }
+    if (_SEC_KW.some(function(kw){ return combined.indexOf(kw) !== -1; })) {
+        html += '<span class="badge-security">보안</span>';
+    }
+    return html;
+}
+
+/** 상태 변수 */
+var _currentTab = 'risk';
+var _currentPage = 1;
+var _pageSize = 20;
+var _filterProject = '';
+var _filterFile = (new URLSearchParams(window.location.search)).get('file') || '';
+var _allFuncs = [];
+var _riskData = [];
+var _godClasses = [];
+var _secFuncs = [];
+
+/** 전체 complexity 목록 추출 */
+function _allFunctions(results) {
+    var all = [];
+    Object.keys(results).forEach(function(proj) {
+        (results[proj].complexity || []).forEach(function(f) { all.push(f); });
+    });
+    return all;
+}
+
+/** 위험 함수 목록 구성 (필터 적용) */
+function _buildRiskData(allFuncs) {
+    var data = _filterFile
+        ? allFuncs.filter(function(f){ return f.file_path === _filterFile; })
+        : allFuncs.filter(function(f){ return f.cc >= 10; });
+    if (_filterProject) data = data.filter(function(f){ return f.project === _filterProject; });
+    return data.sort(function(a,b){ return b.cc - a.cc; });
+}
+
+/** God Class 탐지 (함수 수 ≥ 20 또는 평균 CC ≥ 8) */
+function _detectGodClasses(allFuncs) {
+    var byClass = {};
+    allFuncs.forEach(function(f) {
+        if (!f.class_name) return;
+        var key = f.class_name + '|' + (f.project || '');
+        if (!byClass[key]) byClass[key] = { class_name: f.class_name, project: f.project || '', funcs: [] };
+        byClass[key].funcs.push(f);
+    });
+    var result = [];
+    Object.keys(byClass).forEach(function(k) {
+        var grp = byClass[k];
+        var cnt = grp.funcs.length;
+        var avgCC = cnt > 0 ? grp.funcs.reduce(function(s,f){ return s+f.cc; },0)/cnt : 0;
+        if (cnt >= 20 || avgCC >= 8) {
+            result.push({ class_name: grp.class_name, function_count: cnt, avg_cc: avgCC, project: grp.project });
+        }
+    });
+    return result.sort(function(a,b){ return b.avg_cc - a.avg_cc; });
+}
+
+/** 보안 민감 함수 탐지 */
+function _detectSecurityFuncs(allFuncs) {
+    return allFuncs.filter(function(f) {
+        var combined = ((f.function_name||'')+' '+(f.file_path||'')).toLowerCase();
+        return _SEC_KW.some(function(kw){ return combined.indexOf(kw) !== -1; });
+    });
+}
+
+/** 프로젝트 필터 드롭다운 채우기 */
+function _populateProjectFilter(results) {
+    var sel = document.getElementById('filter-project');
+    Object.keys(results).forEach(function(proj) {
+        var opt = document.createElement('option');
+        opt.value = proj; opt.textContent = proj;
+        sel.appendChild(opt);
+    });
+    if (_filterProject) sel.value = _filterProject;
+}
+
+/** 위험 함수 테이블 렌더링 */
+function _renderRiskTable(rows) {
+    var tbody = document.getElementById('risk-tbody');
+    var offset = (_currentPage - 1) * _pageSize;
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:var(--spacing-lg);color:var(--color-text-secondary)">'
+            + (_filterFile ? '해당 파일에 함수가 없습니다.' : 'CC ≥ 10 위험 함수가 없습니다.') + '</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(function(f, i) {
+        var file = (f.file_path||'').split(/[\\/]/).pop();
+        return '<tr>'
+            + '<td>' + (offset + i + 1) + '</td>'
+            + '<td><a class="func-link" href="/flow-graph?start=' + encodeURIComponent(f.function_name||'') + '">' + _escapeHtml(f.function_name||'') + '</a></td>'
+            + '<td>' + _escapeHtml(f.class_name||'') + '</td>'
+            + '<td style="font-family:var(--font-family-code);font-size:12px">' + _escapeHtml(file) + '</td>'
+            + '<td>' + _escapeHtml(f.project||'') + '</td>'
+            + '<td style="font-weight:600">' + (f.cc||0) + '</td>'
+            + '<td><span class="cc-badge ' + _ccBadgeClass(f.grade||'') + '">' + _escapeHtml(f.grade||'') + '</span></td>'
+            + '<td>' + (f.line_start||'') + '</td>'
+            + '<td>' + _getBadges(f) + '</td>'
+            + '</tr>';
+    }).join('');
+}
+
+/** 페이지네이션 렌더링 */
+function _renderPagination(total) {
+    var totalPages = Math.ceil(total / _pageSize);
+    var bar = document.getElementById('pagination-bar');
+    if (totalPages <= 1) { bar.innerHTML = total ? '<span class="page-info">총 ' + total + '개</span>' : ''; return; }
+    var html = '';
+    var start = Math.max(1, _currentPage - 4);
+    var end   = Math.min(totalPages, _currentPage + 4);
+    for (var p = start; p <= end; p++) {
+        html += '<button onclick="changePage(' + p + ')" class="page-btn' + (p===_currentPage?' active':'') + '">' + p + '</button>';
+    }
+    bar.innerHTML = html + '<span class="page-info">총 ' + total + '개</span>';
+}
+
+/** God Class 카드 그리드 렌더링 */
+function _renderGodClassGrid(godClasses) {
+    var grid = document.getElementById('godclass-grid');
+    if (!godClasses.length) {
+        grid.innerHTML = '<p style="color:var(--color-text-secondary)">탐지된 God Class가 없습니다.</p>';
+        return;
+    }
+    grid.innerHTML = godClasses.map(function(gc) {
+        return '<div class="godclass-card">'
+            + '<div class="gc-name">' + _escapeHtml(gc.class_name) + '</div>'
+            + '<div style="font-size:var(--font-size-caption);color:var(--color-text-secondary)">' + _escapeHtml(gc.project) + '</div>'
+            + '<div class="gc-meta">'
+            + '<div class="gc-stat">함수 수 <strong>' + gc.function_count + '</strong></div>'
+            + '<div class="gc-stat">평균 CC <strong><span class="cc-badge ' + _ccBadgeClass(gc.avg_cc>=15?'매우높음':gc.avg_cc>=10?'높음':gc.avg_cc>=5?'중간':'낮음') + '">' + gc.avg_cc.toFixed(1) + '</span></strong></div>'
+            + '</div></div>';
+    }).join('');
+}
+
+/** 보안 민감 함수 테이블 렌더링 */
+function _renderSecurityTable(secFuncs) {
+    var tbody = document.getElementById('security-tbody');
+    if (!secFuncs.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:var(--spacing-lg);color:var(--color-text-secondary)">탐지된 보안 민감 함수가 없습니다.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = secFuncs.slice(0, 50).map(function(f) {
+        var file = (f.file_path||'').split(/[\\/]/).pop();
+        return '<tr>'
+            + '<td><a class="func-link" href="/flow-graph?start=' + encodeURIComponent(f.function_name||'') + '">' + _escapeHtml(f.function_name||'') + '</a></td>'
+            + '<td>' + _escapeHtml(f.class_name||'') + '</td>'
+            + '<td style="font-family:var(--font-family-code);font-size:12px">' + _escapeHtml(file) + '</td>'
+            + '<td>' + _escapeHtml(f.project||'') + '</td>'
+            + '<td>' + (f.cc||0) + '</td>'
+            + '<td><span class="cc-badge ' + _ccBadgeClass(f.grade||'') + '">' + _escapeHtml(f.grade||'') + '</span></td>'
+            + '</tr>';
+    }).join('');
+}
+
+/** 현재 탭 렌더링 */
+function _renderCurrentTab() {
+    if (_currentTab === 'risk') {
+        var page = _riskData.slice((_currentPage-1)*_pageSize, _currentPage*_pageSize);
+        _renderRiskTable(page);
+        _renderPagination(_riskData.length);
+        document.getElementById('filter-info').textContent = '총 ' + _riskData.length + '개 함수';
+    } else if (_currentTab === 'godclass') {
+        _renderGodClassGrid(_godClasses);
+    } else {
+        _renderSecurityTable(_secFuncs);
+    }
+}
+
+/** 에러 배너 표시 — CSS 클래스 기반 (style-src inline 최소화) */
+function _showComplexityError(message) {
+    document.getElementById('complexity-error-region').innerHTML =
+        '<div class="inline-error-banner">'
+        + '<span class="inline-error-msg">' + _escapeHtml(message) + '</span>'
+        + '<button class="inline-error-retry" onclick="loadComplexity()">재시도</button>'
+        + '</div>';
+    switchState('#complexity-container', 'error');
+}
+
+/** 탭 전환 */
+function switchTab(tabName) {
+    _currentTab = tabName;
+    ['risk', 'godclass', 'security'].forEach(function(t) {
+        document.getElementById('tab-' + t).style.display = (t === tabName) ? 'block' : 'none';
+        var btn = document.querySelector('[data-tab="' + t + '"]');
+        if (btn) { btn.classList.toggle('active', t === tabName); btn.setAttribute('aria-selected', t === tabName ? 'true' : 'false'); }
+    });
+    _renderCurrentTab();
+}
+
+/** 페이지 변경 */
+function changePage(page) {
+    _currentPage = page;
+    var rows = _riskData.slice((_currentPage-1)*_pageSize, _currentPage*_pageSize);
+    _renderRiskTable(rows);
+    _renderPagination(_riskData.length);
+}
+
+/** 프로젝트 필터 변경 */
+function filterByProject(proj) {
+    _filterProject = proj;
+    _currentPage = 1;
+    if (!_allFuncs.length) return;
+    _riskData = _buildRiskData(_allFuncs);
+    _renderCurrentTab();
+}
+
+/** Excel 내보내기 ([M1.F8]) */
+function exportExcel() {
+    var btn = document.getElementById('export-btn');
+    btn.disabled = true;
+    btn.textContent = '생성 중...';
+    // GET 다운로드 — 직접 navigate
+    window.location.href = '/api/export/excel';
+    setTimeout(function() { btn.disabled = false; btn.textContent = 'Excel 내보내기'; }, 3000);
+}
+
+/** 분석 결과 fetch → 전체 렌더링 */
+function loadComplexity() {
+    switchState('#complexity-container', 'loading');
+    fetch('/api/analyze/results')
+        .then(function(res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status + ' — 서버 응답 오류');
+            return res.json();
+        })
+        .then(function(data) {
+            var results = data.results || {};
+            if (!Object.keys(results).length) { switchState('#complexity-container', 'empty'); return; }
+            _allFuncs = _allFunctions(results);
+            _riskData = _buildRiskData(_allFuncs);
+            _godClasses = _detectGodClasses(_allFuncs);
+            _secFuncs = _detectSecurityFuncs(_allFuncs);
+            _populateProjectFilter(results);
+            // URL ?file= 파라미터 → 페이지 제목 업데이트
+            if (_filterFile) {
+                var fname = _filterFile.split(/[\\/]/).pop();
+                document.getElementById('page-title').textContent = '복잡도 상세 — ' + fname;
+            }
+            _renderCurrentTab();
+            switchState('#complexity-container', 'idle');
+        })
+        .catch(function(err) { _showComplexityError('데이터 로드 실패: ' + err.message); });
+}
+
+document.addEventListener('DOMContentLoaded', loadComplexity);
+</script>
+{% endblock %}

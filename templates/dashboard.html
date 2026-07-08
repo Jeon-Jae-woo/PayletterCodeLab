@@ -1,0 +1,614 @@
+{% extends 'base.html' %}
+{% from 'macros/ui_components.html' import empty_state %}
+
+{% block title %}통합 대시보드 — payletterCodeLab{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ================================================================
+   dashboard.html 전용 스타일
+   [GR-4.2] 색상/간격은 var(--token) 전용 — 하드코딩 hex 금지
+   [PR-8] CDN URL 없음 — 로컬 번들 전용
+   ================================================================ */
+
+/* 대시보드 컨테이너 — loading overlay 앵커 */
+#dashboard-container { position: relative; }
+
+/* ── 카드 그리드 ── */
+.summary-row {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: var(--spacing-md); margin-bottom: var(--spacing-lg);
+}
+.metric-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-md);
+    box-shadow: var(--shadow-card);
+}
+.metric-label { font-size: var(--font-size-caption); color: var(--color-text-secondary); margin-bottom: var(--spacing-xs); }
+.metric-value { font-size: var(--font-size-h2); font-weight: 700; color: var(--color-text-primary); }
+.metric-value.danger { color: var(--color-danger); }
+
+/* ── 차트 행 ── */
+.charts-row { display: grid; grid-template-columns: 3fr 2fr; gap: var(--spacing-md); margin-bottom: var(--spacing-lg); }
+.chart-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-md);
+    box-shadow: var(--shadow-card);
+}
+.chart-title { font-size: var(--font-size-h3); font-weight: 600; color: var(--color-text-primary); margin-bottom: var(--spacing-md); }
+.chart-canvas-wrap { height: 320px; position: relative; overflow: hidden; }
+
+/* ── 바 차트 ── */
+.bar-chart-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-md);
+    box-shadow: var(--shadow-card); margin-bottom: var(--spacing-lg);
+}
+
+/* ── 테이블 ── */
+.panel-card {
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-card); padding: var(--spacing-md);
+    box-shadow: var(--shadow-card); margin-bottom: var(--spacing-lg);
+}
+.panel-title { font-size: var(--font-size-h3); font-weight: 600; color: var(--color-text-primary); margin-bottom: var(--spacing-md); }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th {
+    text-align: left; padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--color-surface); color: var(--color-text-secondary);
+    font-weight: 600; border-bottom: 1px solid var(--color-border);
+}
+.data-table td { padding: var(--spacing-xs) var(--spacing-sm); border-bottom: 1px solid var(--color-border); color: var(--color-text-primary); }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--color-surface); }
+
+/* CC 등급 배지 */
+.cc-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--rounded-full); white-space: nowrap; }
+.cc-badge-low      { background: var(--color-success-bg); color: var(--color-success-text); }
+.cc-badge-medium   { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.cc-badge-high     { background: var(--color-danger-bg);  color: var(--color-danger); }
+.cc-badge-critical { background: var(--color-critical-bg); color: #fff; }
+
+/* ── 로딩 오버레이 (스켈레톤 그리드) ── */
+[data-region="loading-skeleton-grid"] {
+    display: none; flex-direction: column; gap: var(--spacing-md);
+    position: absolute; inset: 0; background: var(--color-bg);
+    z-index: 5; padding: 0; border-radius: var(--border-radius-card);
+}
+.skeleton-cards-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--spacing-md); }
+.skeleton-block { background: var(--color-surface); border-radius: var(--rounded-md); animation: dash-pulse 1.4s ease-in-out infinite; }
+.skeleton-card-h  { height: 80px; }
+.skeleton-chart-h { height: 320px; }
+.skeleton-table-h { height: 200px; }
+@keyframes dash-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ── 에러 / 빈 상태 ── */
+[data-region="error-state"] { display: none; margin-bottom: var(--spacing-lg); }
+[data-region="empty-cta"]   { display: none; }
+
+/* ── 4-State CSS 토글 ── */
+#dashboard-container[data-state="loading"] [data-region="loading-skeleton-grid"] { display: flex; }
+#dashboard-container[data-state="loading"] .dashboard-body { visibility: hidden; }
+#dashboard-container[data-state="error"]  [data-region="error-state"]          { display: block; }
+#dashboard-container[data-state="empty"]  [data-region="empty-cta"]            { display: flex; }
+#dashboard-container[data-state="empty"]  .dashboard-body                      { display: none; }
+
+/* ── 액션 행 ── */
+.action-row { display: flex; justify-content: flex-end; margin-bottom: var(--spacing-lg); }
+.btn-primary {
+    padding: 9px var(--spacing-md); border: none; border-radius: var(--rounded-sm);
+    background: var(--color-primary); color: var(--color-bg); cursor: pointer;
+    font-size: var(--font-size-body); font-weight: 500; transition: background 0.15s ease;
+}
+.btn-primary:hover    { background: var(--color-primary-hover); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* D3 treemap 텍스트 */
+#treemap-canvas text { pointer-events: none; }
+
+/* 폴백 테이블 */
+#treemap-fallback { display: none; }
+
+/* 인라인 에러 배너 — _showDashError 전용 */
+.inline-error-banner {
+    display: flex; align-items: center; gap: var(--spacing-sm);
+    background: var(--color-danger-light); border: 1px solid var(--color-danger);
+    border-radius: var(--rounded-md); padding: var(--spacing-md);
+}
+.inline-error-msg { flex: 1; color: var(--color-danger); }
+.inline-error-retry {
+    padding: 6px 12px; background: var(--color-danger); color: var(--color-bg);
+    border: none; border-radius: var(--rounded-sm); cursor: pointer; font-size: 13px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header" style="margin-bottom:var(--spacing-xl)">
+    <h1 style="font-size:var(--font-size-h1);font-weight:700;color:var(--color-text-primary)">통합 대시보드</h1>
+    <p style="font-size:var(--font-size-body);color:var(--color-text-secondary);margin-top:var(--spacing-xs)">분석된 C# 코드베이스의 복잡도 및 SP 현황을 한눈에 확인합니다.</p>
+</div>
+
+<div id="dashboard-container" data-state="loading">
+
+    {# ── [loading] 스켈레톤 그리드 ── #}
+    <div data-region="loading-skeleton-grid" aria-busy="true" aria-label="데이터 불러오는 중">
+        <div class="skeleton-cards-row">
+            {% for _ in range(5) %}<div class="skeleton-block skeleton-card-h"></div>{% endfor %}
+        </div>
+        <div style="display:grid;grid-template-columns:3fr 2fr;gap:var(--spacing-md)">
+            <div class="skeleton-block skeleton-chart-h"></div>
+            <div class="skeleton-block skeleton-chart-h"></div>
+        </div>
+        <div class="skeleton-block skeleton-table-h"></div>
+    </div>
+
+    {# ── [error] 에러 배너 ── #}
+    <div data-region="error-state" id="dash-error-region" role="alert" aria-live="assertive"></div>
+
+    {# ── [empty] 빈 상태 ── #}
+    <div data-region="empty-cta">
+        {{ empty_state('분석 결과가 없습니다. 소스를 연결하고 분석을 먼저 실행하세요.', '소스 연결 설정으로 이동', '/setup') }}
+    </div>
+
+    {# ── [idle] 대시보드 본문 ── #}
+    <div class="dashboard-body">
+
+        {# refresh-action + 로드된 프로젝트 목록 #}
+        <div data-region="refresh-action" class="action-row" style="flex-wrap:wrap;gap:var(--spacing-sm);align-items:center">
+            <button class="btn-primary" id="refresh-btn" onclick="refreshDashboard()">데이터 새로고침</button>
+            <div id="project-tag-row" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
+        </div>
+
+        {# summary-cards-row — 5개 메트릭 카드 #}
+        <div data-region="summary-cards-row" class="summary-row" id="summary-cards-row">
+            <div class="metric-card">
+                <div class="metric-label">분석 프로젝트</div>
+                <div class="metric-value" id="stat-projects">—</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">총 파일 수</div>
+                <div class="metric-value" id="stat-files">—</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">총 함수 수</div>
+                <div class="metric-value" id="stat-functions">—</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">위험 함수 (CC≥10)</div>
+                <div class="metric-value danger" id="stat-risk">—</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">감지된 SP 수</div>
+                <div class="metric-value" id="stat-sp">—</div>
+            </div>
+        </div>
+
+        {# treemap-panel + donut-bar-charts-row #}
+        <div class="charts-row">
+            <div data-region="treemap-panel" class="chart-card">
+                <div class="chart-title">파일별 복잡도 Treemap</div>
+                <div class="chart-canvas-wrap" id="treemap-canvas"></div>
+                {# D3 렌더 실패 시 폴백 테이블 #}
+                <div id="treemap-fallback" style="overflow-x:auto">
+                    <table class="data-table" id="treemap-fallback-table"></table>
+                </div>
+            </div>
+            <div data-region="donut-chart-panel" class="chart-card">
+                <div class="chart-title">CC 등급 분포</div>
+                <div class="chart-canvas-wrap">
+                    <canvas id="donut-canvas"></canvas>
+                </div>
+            </div>
+        </div>
+
+        {# 프로젝트별 비교 바 차트 #}
+        <div data-region="bar-chart-panel" class="bar-chart-card">
+            <div class="chart-title">프로젝트별 평균 CC / 위험 함수 수</div>
+            <div style="height:240px;position:relative">
+                <canvas id="bar-canvas"></canvas>
+            </div>
+        </div>
+
+        {# risk-table — CC ≥ 10 위험 함수 Top 10 #}
+        <div data-region="risk-table" class="panel-card">
+            <div class="panel-title">위험 함수 Top 10 <span style="font-size:12px;color:var(--color-text-secondary);font-weight:400">(CC ≥ 10, 내림차순)</span></div>
+            <div style="overflow-x:auto">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width:36px">#</th>
+                            <th>함수명</th>
+                            <th>클래스</th>
+                            <th>파일</th>
+                            <th>프로젝트</th>
+                            <th style="width:52px">CC</th>
+                            <th style="width:80px">등급</th>
+                        </tr>
+                    </thead>
+                    <tbody id="risk-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        {# God Class 섹션 [M1.AC 7.6] #}
+        <div class="panel-card">
+            <div class="panel-title">God Class <span style="font-size:12px;color:var(--color-text-secondary);font-weight:400">(함수 수 ≥ 20 또는 평균 CC ≥ 8)</span></div>
+            <div id="god-class-body">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>클래스명</th>
+                            <th style="width:80px">함수 수</th>
+                            <th style="width:80px">평균 CC</th>
+                            <th>프로젝트</th>
+                        </tr>
+                    </thead>
+                    <tbody id="god-class-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        {# 보안 민감 코드 섹션 [M1.AC 7.6] #}
+        <div class="panel-card">
+            <div class="panel-title">보안 민감 함수 <span style="font-size:12px;color:var(--color-text-secondary);font-weight:400">(보안 키워드 탐지)</span></div>
+            <div style="overflow-x:auto">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>함수명</th>
+                            <th>클래스</th>
+                            <th>파일</th>
+                            <th>프로젝트</th>
+                            <th style="width:52px">CC</th>
+                        </tr>
+                    </thead>
+                    <tbody id="security-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>{# /.dashboard-body #}
+
+</div>{# /#dashboard-container #}
+{% endblock %}
+
+{% block extra_scripts %}
+{# [PR-8] CDN 완전 금지 — 로컬 번들만 사용 #}
+<script src="{{ url_for('static', filename='js/d3.v7.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/chart.v4.min.js') }}"></script>
+<script>
+/**
+ * Dashboard JS 색상 토큰 — base.html :root와 동기화 유지
+ * D3 SVG fill / Chart.js backgroundColor는 CSS var() 미지원 → JS 상수 사용
+ */
+var _T = {
+    success:  '#22c55e', warning:  '#f59e0b',
+    danger:   '#ef4444', critical: '#991b1b',
+    primary:  '#12ccc1'
+};
+
+/** XSS 방지 HTML 이스케이프 [security-standards.md §9.1] */
+function _escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** CC 등급 → 배지 CSS 클래스 */
+function _ccBadgeClass(grade) {
+    var map = { '낮음': 'cc-badge-low', '중간': 'cc-badge-medium', '높음': 'cc-badge-high', '매우높음': 'cc-badge-critical' };
+    return map[grade] || 'cc-badge-low';
+}
+
+/** CC 수치 → treemap 셀 색상 (_T 토큰 참조) */
+function _ccColor(avgCC) {
+    if (avgCC >= 15) return _T.critical;
+    if (avgCC >= 10) return _T.danger;
+    if (avgCC >= 5)  return _T.warning;
+    return _T.success;
+}
+
+/** 전체 complexity 목록 추출 (모든 프로젝트 합산) */
+function _allFunctions(results) {
+    var all = [];
+    Object.keys(results).forEach(function(proj) {
+        var funcs = (results[proj].complexity || []);
+        funcs.forEach(function(f) { all.push(f); });
+    });
+    return all;
+}
+
+/** God Class 클라이언트 탐지 (함수 수 ≥ 20 또는 평균 CC ≥ 8) */
+function _detectGodClasses(allFuncs) {
+    var byClass = {};
+    allFuncs.forEach(function(f) {
+        if (!f.class_name) return;
+        var key = f.class_name + '|' + (f.project || '');
+        if (!byClass[key]) byClass[key] = { class_name: f.class_name, project: f.project || '', funcs: [] };
+        byClass[key].funcs.push(f);
+    });
+    var result = [];
+    Object.keys(byClass).forEach(function(k) {
+        var grp = byClass[k];
+        var cnt = grp.funcs.length;
+        var avgCC = cnt > 0 ? grp.funcs.reduce(function(s,f){ return s+f.cc; },0)/cnt : 0;
+        if (cnt >= 20 || avgCC >= 8) {
+            result.push({ class_name: grp.class_name, function_count: cnt, avg_cc: avgCC, project: grp.project });
+        }
+    });
+    return result.sort(function(a,b){ return b.avg_cc - a.avg_cc; });
+}
+
+/** 보안 민감 함수 탐지 — 키워드 기반 [M1.AC 2.4] */
+var _SEC_KW = ['encrypt','hash','token','auth','secret','key','password','crypt'];
+function _detectSecurityFuncs(allFuncs) {
+    return allFuncs.filter(function(f) {
+        var combined = ((f.function_name||'') + ' ' + (f.file_path||'')).toLowerCase();
+        return _SEC_KW.some(function(kw){ return combined.indexOf(kw) !== -1; });
+    });
+}
+
+/** 요약 카드 렌더링 */
+function _renderSummaryCards(results, allFuncs) {
+    var files = {};
+    allFuncs.forEach(function(f){ if (f.file_path) files[f.file_path] = 1; });
+    var spCount = Object.keys(results).reduce(function(s,p){ return s + ((results[p].sp_calls||[]).length); }, 0);
+    document.getElementById('stat-projects').textContent  = Object.keys(results).length;
+    document.getElementById('stat-files').textContent     = Object.keys(files).length;
+    document.getElementById('stat-functions').textContent = allFuncs.length;
+    document.getElementById('stat-risk').textContent      = allFuncs.filter(function(f){ return f.cc >= 10; }).length;
+    document.getElementById('stat-sp').textContent        = spCount;
+
+    /* 로드된 프로젝트 배지 */
+    var tagRow = document.getElementById('project-tag-row');
+    if (tagRow) {
+        var names = Object.keys(results);
+        tagRow.innerHTML = (names.length ? '<span style="font-size:12px;color:var(--color-text-secondary);margin-right:4px">로드됨:</span>' : '')
+            + names.map(function(name) {
+                var funcCount = (results[name].complexity || []).length;
+                return '<span style="display:inline-flex;align-items:center;gap:4px;'
+                    + 'background:var(--color-primary-light);color:var(--color-primary);'
+                    + 'border:1px solid var(--color-primary);border-radius:12px;'
+                    + 'padding:2px 10px;font-size:12px;font-weight:500">'
+                    + _escapeHtml(name)
+                    + '<span style="opacity:0.7">(' + funcCount + '개 함수)</span>'
+                    + '</span>';
+            }).join('');
+    }
+}
+
+/** 위험 함수 Top 10 테이블 렌더링 */
+function _renderRiskTable(allFuncs) {
+    var risk = allFuncs.filter(function(f){ return f.cc >= 10; })
+        .sort(function(a,b){ return b.cc - a.cc; }).slice(0, 10);
+    var tbody = document.getElementById('risk-table-body');
+    if (!risk.length) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--color-text-secondary)">위험 함수 없음 (CC ≥ 10)</td></tr>'; return; }
+    tbody.innerHTML = risk.map(function(f, i) {
+        var file = (f.file_path||'').split(/[\\/]/).pop();
+        return '<tr>'
+            + '<td>' + (i+1) + '</td>'
+            + '<td>' + _escapeHtml(f.function_name||'') + '</td>'
+            + '<td>' + _escapeHtml(f.class_name||'') + '</td>'
+            + '<td style="font-family:var(--font-family-code);font-size:12px">' + _escapeHtml(file) + '</td>'
+            + '<td>' + _escapeHtml(f.project||'') + '</td>'
+            + '<td style="font-weight:600">' + (f.cc||0) + '</td>'
+            + '<td><span class="cc-badge ' + _ccBadgeClass(f.grade||'') + '">' + _escapeHtml(f.grade||'') + '</span></td>'
+            + '</tr>';
+    }).join('');
+}
+
+/** God Class 테이블 렌더링 */
+function _renderGodClassTable(godClasses) {
+    var tbody = document.getElementById('god-class-table-body');
+    if (!godClasses.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--color-text-secondary)">탐지된 God Class 없음</td></tr>';
+        return;
+    }
+    tbody.innerHTML = godClasses.map(function(gc) {
+        return '<tr>'
+            + '<td><strong>' + _escapeHtml(gc.class_name) + '</strong></td>'
+            + '<td>' + gc.function_count + '</td>'
+            + '<td><span class="cc-badge ' + _ccBadgeClass(gc.avg_cc>=15?'매우높음':gc.avg_cc>=10?'높음':gc.avg_cc>=5?'중간':'낮음') + '">' + gc.avg_cc.toFixed(1) + '</span></td>'
+            + '<td>' + _escapeHtml(gc.project) + '</td>'
+            + '</tr>';
+    }).join('');
+}
+
+/** 보안 민감 함수 테이블 렌더링 */
+function _renderSecurityTable(secFuncs) {
+    var tbody = document.getElementById('security-table-body');
+    var limited = secFuncs.slice(0, 20);
+    if (!limited.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--color-text-secondary)">탐지된 보안 민감 함수 없음</td></tr>';
+        return;
+    }
+    tbody.innerHTML = limited.map(function(f) {
+        var file = (f.file_path||'').split(/[\\/]/).pop();
+        return '<tr>'
+            + '<td>' + _escapeHtml(f.function_name||'') + '</td>'
+            + '<td>' + _escapeHtml(f.class_name||'') + '</td>'
+            + '<td style="font-family:var(--font-family-code);font-size:12px">' + _escapeHtml(file) + '</td>'
+            + '<td>' + _escapeHtml(f.project||'') + '</td>'
+            + '<td>' + (f.cc||0) + '</td>'
+            + '</tr>';
+    }).join('');
+}
+
+/** D3 Treemap 렌더링 — 실패 시 테이블 폴백 */
+function _renderTreemap(allFuncs) {
+    try {
+        _renderTreemapD3(allFuncs);
+    } catch (e) {
+        // D3 렌더 실패 → 테이블 폴백 자동 전환
+        document.getElementById('treemap-canvas').style.display = 'none';
+        document.getElementById('treemap-fallback').style.display = 'block';
+        _renderTreemapFallback(allFuncs);
+    }
+}
+
+/** Treemap 데이터 계층 구조 구성 — 순수 함수 [SRP: 데이터 변환 전용] */
+function _buildTreemapHierarchy(allFuncs) {
+    var fileMap = {};
+    allFuncs.forEach(function(f) {
+        var key = f.file_path || f.function_name;
+        var proj = f.project || 'Unknown';
+        if (!fileMap[key]) fileMap[key] = { name: (f.file_path||'').split(/[\\/]/).pop(), path: f.file_path, proj: proj, count: 0, totalCC: 0 };
+        fileMap[key].count++;
+        fileMap[key].totalCC += (f.cc || 0);
+    });
+    var projMap = {};
+    Object.keys(fileMap).forEach(function(k) {
+        var fd = fileMap[k];
+        if (!projMap[fd.proj]) projMap[fd.proj] = { name: fd.proj, children: [] };
+        projMap[fd.proj].children.push({ name: fd.name, path: fd.path, value: fd.count, avgCC: fd.count>0 ? fd.totalCC/fd.count : 0 });
+    });
+    return { name: 'root', children: Object.values(projMap) };
+}
+
+/** D3 Treemap 구현 — _buildTreemapHierarchy 활용 */
+function _renderTreemapD3(allFuncs) {
+    var hierarchy = _buildTreemapHierarchy(allFuncs);
+    var wrap = document.getElementById('treemap-canvas');
+    var w = wrap.clientWidth || 560;
+    var h = 300;
+
+    var root = d3.hierarchy(hierarchy).sum(function(d){ return d.value || 0; }).sort(function(a,b){ return b.value-a.value; });
+    d3.treemap().size([w, h]).padding(2)(root);
+
+    var svg = d3.select('#treemap-canvas').append('svg').attr('width', w).attr('height', h);
+
+    var cell = svg.selectAll('g').data(root.leaves()).enter().append('g')
+        .attr('transform', function(d){ return 'translate('+d.x0+','+d.y0+')'; })
+        .style('cursor', 'pointer')
+        .on('click', function(event, d){
+            if (d.data.path) window.location.href = '/complexity?file=' + encodeURIComponent(d.data.path);
+        });
+
+    cell.append('rect')
+        .attr('width',  function(d){ return Math.max(0, d.x1-d.x0); })
+        .attr('height', function(d){ return Math.max(0, d.y1-d.y0); })
+        .attr('fill', function(d){ return _ccColor(d.data.avgCC||0); })
+        .attr('stroke', '#fff').attr('stroke-width', 1);
+
+    /* 마우스오버 툴팁 — title 엘리먼트 (파일명·평균CC·함수수) [M1.AC 7.2] */
+    cell.append('title').text(function(d){
+        return d.data.name
+            + '\n평균 CC: ' + ((d.data.avgCC||0).toFixed(1))
+            + '\n함수 수: ' + (d.data.value||0);
+    });
+
+    cell.filter(function(d){ return (d.x1-d.x0) > 36; })
+        .append('text').attr('x', 4).attr('y', 14)
+        .attr('font-size', '11px').attr('fill', '#fff')
+        .text(function(d){
+            var n = d.data.name;
+            return n.length > 14 ? n.substring(0,11)+'…' : n;
+        });
+}
+
+/** Treemap 폴백 테이블 */
+function _renderTreemapFallback(allFuncs) {
+    var fileMap = {};
+    allFuncs.forEach(function(f) {
+        var k = f.file_path||f.function_name;
+        if (!fileMap[k]) fileMap[k] = { name: (f.file_path||'').split(/[\\/]/).pop(), count: 0, totalCC: 0, proj: f.project||'' };
+        fileMap[k].count++; fileMap[k].totalCC += (f.cc||0);
+    });
+    var rows = Object.values(fileMap).sort(function(a,b){ return b.count-a.count; }).slice(0,20);
+    var tbl = document.getElementById('treemap-fallback-table');
+    tbl.innerHTML = '<thead><tr><th>파일명</th><th>프로젝트</th><th>함수 수</th><th>평균 CC</th></tr></thead>'
+        + '<tbody>' + rows.map(function(r){
+            return '<tr><td>' + _escapeHtml(r.name) + '</td><td>' + _escapeHtml(r.proj) + '</td><td>' + r.count + '</td><td>' + (r.count>0?(r.totalCC/r.count).toFixed(1):'0') + '</td></tr>';
+        }).join('') + '</tbody>';
+}
+
+/** Chart.js 도넛 차트 — CC 등급 분포 */
+function _renderDonut(allFuncs) {
+    var counts = { '낮음': 0, '중간': 0, '높음': 0, '매우높음': 0 };
+    allFuncs.forEach(function(f){ if (counts[f.grade] !== undefined) counts[f.grade]++; });
+    new Chart(document.getElementById('donut-canvas'), {
+        type: 'doughnut',
+        data: {
+            labels: ['낮음 (1~4)', '중간 (5~9)', '높음 (10~14)', '매우높음 (15+)'],
+            datasets: [{ data: [counts['낮음'], counts['중간'], counts['높음'], counts['매우높음']],
+                backgroundColor: [_T.success, _T.warning, _T.danger, _T.critical],
+                borderWidth: 2, borderColor: '#fff' }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 12 } } } } }
+    });
+}
+
+/** Chart.js 바 차트 — 프로젝트별 비교 */
+function _renderBarChart(results) {
+    var labels=[], avgCCs=[], riskCounts=[];
+    Object.keys(results).forEach(function(proj) {
+        var funcs = results[proj].complexity || [];
+        var total = funcs.reduce(function(s,f){ return s+f.cc; }, 0);
+        labels.push(proj);
+        avgCCs.push(funcs.length > 0 ? parseFloat((total/funcs.length).toFixed(1)) : 0);
+        riskCounts.push(funcs.filter(function(f){ return f.cc >= 10; }).length);
+    });
+    new Chart(document.getElementById('bar-canvas'), {
+        type: 'bar',
+        data: { labels: labels, datasets: [
+            { label: '평균 CC', data: avgCCs, backgroundColor: _T.primary, yAxisID: 'y' },
+            { label: '위험 함수 수', data: riskCounts, backgroundColor: _T.danger, yAxisID: 'y1' }
+        ]},
+        options: { responsive: true, maintainAspectRatio: false,
+            scales: {
+                y:  { position: 'left',  title: { display: true, text: '평균 CC' } },
+                y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: '위험 함수 수' } }
+            },
+            plugins: { legend: { position: 'top' } }
+        }
+    });
+}
+
+/** 에러 배너 표시 — CSS 클래스 기반 (style-src inline 최소화) */
+function _showDashError(message) {
+    var region = document.getElementById('dash-error-region');
+    region.innerHTML = '<div class="inline-error-banner">'
+        + '<span class="inline-error-msg">' + _escapeHtml(message) + '</span>'
+        + '<button class="inline-error-retry" onclick="loadDashboard()">재시도</button>'
+        + '</div>';
+    switchState('#dashboard-container', 'error');
+}
+
+/** 분석 결과 fetch → 전체 대시보드 렌더링 */
+function loadDashboard() {
+    switchState('#dashboard-container', 'loading');
+    fetch('/api/analyze/results')
+        .then(function(res){ return res.json(); })
+        .then(function(data) {
+            var results = data.results || {};
+            if (!Object.keys(results).length) { switchState('#dashboard-container', 'empty'); return; }
+            var allFuncs = _allFunctions(results);
+            _renderSummaryCards(results, allFuncs);
+            _renderRiskTable(allFuncs);
+            _renderGodClassTable(_detectGodClasses(allFuncs));
+            _renderSecurityTable(_detectSecurityFuncs(allFuncs));
+            _renderTreemap(allFuncs);
+            _renderDonut(allFuncs);
+            _renderBarChart(results);
+            switchState('#dashboard-container', 'idle');
+        })
+        .catch(function(err){ _showDashError('데이터 로드 실패: ' + err.message); });
+}
+
+/** 새로고침 버튼 — 현재 캐시 결과 재렌더링 */
+function refreshDashboard() {
+    document.getElementById('refresh-btn').disabled = true;
+    // treemap 재생성을 위해 기존 SVG 초기화
+    var canvas = document.getElementById('treemap-canvas');
+    canvas.style.display = 'block';
+    canvas.innerHTML = '';
+    document.getElementById('treemap-fallback').style.display = 'none';
+    loadDashboard();
+    setTimeout(function(){ document.getElementById('refresh-btn').disabled = false; }, 1500);
+}
+
+// 페이지 로드 시 자동 데이터 fetch
+document.addEventListener('DOMContentLoaded', loadDashboard);
+</script>
+{% endblock %}
