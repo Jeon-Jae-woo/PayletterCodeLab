@@ -8,7 +8,7 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-# SP 탐지 정규식 패턴 — [M1.AC 6.1]
+# SP 실행 탐지 정규식 패턴 — [M1.AC 6.1]
 # SqlCommand/CommandText/Dapper Execute·Query 4가지 패턴
 SP_PATTERNS = [
     re.compile(r'new\s+SqlCommand\s*\(\s*"([\w_]+)"'),
@@ -16,6 +16,12 @@ SP_PATTERNS = [
     re.compile(r'\.Execute\w*\s*\(\s*"([\w_]+)"'),
     re.compile(r'\.Query\w*\s*\(\s*"([\w_]+)"'),
 ]
+
+# Dead SP 탐지 — const/readonly 문자열 상수 선언 패턴
+# 실행 패턴에 해당하지 않고 이 패턴에만 등장하는 SP는 Dead SP로 분류
+_DECL_PATTERN = re.compile(
+    r'(?:const|readonly)\s+string\s+\w+\s*=\s*"([\w_]+)"'
+)
 
 # 결제 도메인 SP 키워드 — [M1.AC 6.4]
 PAYMENT_SP_KEYWORDS = {'payment', 'settle', 'approve', 'cancel', 'refund'}
@@ -34,13 +40,20 @@ def classify_payment_sp(sp_name: str) -> bool:
 
 
 def _scan_line(line: str) -> list:
-    """한 줄에서 SP명 추출 — 모든 탐지 패턴 검색."""
-    sp_names = []
+    """한 줄에서 SP명 추출 — 실행 패턴(is_dead=False) + 선언 패턴(is_dead=True) 검색.
+    반환: [(sp_name, is_dead), ...]
+    """
+    results = []
     for pattern in SP_PATTERNS:
         m = pattern.search(line)
         if m:
-            sp_names.append(m.group(1))
-    return sp_names
+            results.append((m.group(1), False))
+    # 실행 패턴에서 이미 발견된 경우 선언 패턴 중복 탐지 불필요
+    if not results:
+        m = _DECL_PATTERN.search(line)
+        if m:
+            results.append((m.group(1), True))
+    return results
 
 
 def _detect_context(line: str, current_class: str, current_method: str) -> tuple:
@@ -55,8 +68,8 @@ def _detect_context(line: str, current_class: str, current_method: str) -> tuple
 
 
 def _build_sp_call(sp_name: str, file_path: str, line_no: int,
-                   class_name: str, method_name: str) -> dict:
-    """SPCallInfo dict 생성."""
+                   class_name: str, method_name: str, is_dead: bool = False) -> dict:
+    """SPCallInfo dict 생성. is_dead=True이면 선언만 존재하고 실행되지 않는 Dead SP."""
     return {
         'sp_name': sp_name,
         'file_path': file_path,
@@ -65,6 +78,7 @@ def _build_sp_call(sp_name: str, file_path: str, line_no: int,
         'method_name': method_name,
         'project': os.path.basename(os.path.dirname(file_path)),
         'category': 'payment' if classify_payment_sp(sp_name) else 'normal',
+        'is_dead': is_dead,
     }
 
 
@@ -81,19 +95,32 @@ def _analyze_file(file_path: str) -> list:
     current_class, current_method = '', ''
     for line_no, line in enumerate(lines, start=1):
         current_class, current_method = _detect_context(line, current_class, current_method)
-        for sp_name in _scan_line(line):
-            results.append(_build_sp_call(sp_name, file_path, line_no, current_class, current_method))
+        for sp_name, is_dead in _scan_line(line):
+            results.append(_build_sp_call(sp_name, file_path, line_no,
+                                          current_class, current_method, is_dead))
     return results
 
 
 def detect_sp_calls(file_paths: list) -> list:
     """
     .cs 파일 목록에서 SP 호출 패턴을 탐지하여 SPCallInfo 목록 반환 — [M1.AC 6.1]
-    SPCallInfo: {sp_name, file_path, line_no, class_name, method_name, project, category}
+    SPCallInfo: {sp_name, file_path, line_no, class_name, method_name, project, category, is_dead}
+
+    Dead SP 판정:
+    - const/readonly 선언에만 등장하고 실행 패턴(SqlCommand/Execute/Query)에 없으면 is_dead=True
+    - 선언과 실행이 모두 존재하면 실행 패턴이 우선 → is_dead=False로 덮어씀
     """
     results = []
     for file_path in file_paths:
         results.extend(_analyze_file(file_path))
+
+    # 실제 실행되는 SP명 집합 (is_dead=False인 항목)
+    called_sp_names = {c['sp_name'] for c in results if not c['is_dead']}
+    # 선언만 있고 실행도 있는 SP는 Dead 해제 (선언 파일과 실행 파일이 다를 수 있음)
+    for call in results:
+        if call['is_dead'] and call['sp_name'] in called_sp_names:
+            call['is_dead'] = False
+
     return results
 
 
